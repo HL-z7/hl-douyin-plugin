@@ -1,0 +1,224 @@
+/*
+ * 抖音续火插件公共主题。
+ *
+ * 配色取自抖音品牌色：主玫红 #fe2c55、辅青 #25f4ee，压在深灰蓝底上。
+ * 只有一套深色主题——机器人图片多半在聊天里被缩略显示，深底浅字比浅底更清晰，
+ * 也不会在夜间刺眼。
+ *
+ * 布局宽度统一由 .page 控制（620px），所有卡片撑满它。改宽度只需改这一处。
+ */
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  background: transparent;
+  font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.page {
+  width: 620px;
+  padding: 20px 20px 14px;
+  background:
+    radial-gradient(900px 340px at 88% -12%, rgba(254, 44, 85, .30), transparent 62%),
+    radial-gradient(760px 320px at 6% 4%, rgba(37, 244, 238, .16), transparent 60%),
+    linear-gradient(165deg, #101218 0%, #171420 52%, #1e1318 100%);
+  color: #e9ebf2;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+/* ─────────────── 顶部标题区 ─────────────── */
+
+.hero {
+  position: relative;
+  padding: 16px 18px;
+  margin-bottom: 14px;
+  border-radius: 18px;
+  overflow: hidden;
+  background: linear-gradient(120deg, rgba(254, 44, 85, .16), rgba(37, 244, 238, .10));
+  border: 1px solid rgba(255, 255, 255, .10);
+}
+
+/* 右上角的一团高光，纯装饰，让纯色卡片不至于太平 */
+.hero-glow {
+  position: absolute;
+  top: -70px; right: -50px;
+  width: 210px; height: 210px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(254, 44, 85, .48), transparent 68%);
+}
+
+.hero-main { position: relative; display: flex; align-items: center; gap: 13px; }
+
+.logo {
+  width: 46px; height: 46px;
+  flex-shrink: 0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fe2c55, #25f4ee);
+  box-shadow: 0 6px 18px rgba(254, 44, 85, .34);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 25px;
+}
+
+.hero-text { min-width: 0; flex: 1; }
+.hero-title { font-size: 21px; font-weight: 700; letter-spacing: .5px; }
+.hero-sub {
+  font-size: 11.5px; color: #9aa2b8; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* ─────────────── 状态药丸 ─────────────── */
+
+.pill {
+  flex-shrink: 0;
+  padding: 5px 13px;
+  border-radius: 999px;
+  font-size: 11.5px; font-weight: 600;
+  background: rgba(255, 255, 255, .09);
+  color: #cfd4e4;
+}
+.pill.ok   { background: rgba(61, 220, 151, .18); color: #4ee7a8; }
+.pill.err  { background: rgba(255, 92, 92, .18);  color: #ff7676; }
+.pill.warn { background: rgba(255, 180, 84, .18); color: #ffc06b; }
+
+/* ─────────────── 卡片 ─────────────── */
+
+.card {
+  background: rgba(255, 255, 255, .045);
+  border: 1px solid rgba(255, 255, 255, .075);
+  border-radius: 15px;
+  padding: 13px 15px;
+  margin-bottom: 11px;
+}
+
+.card-title {
+  display: flex; align-items: center; gap: 7px;
+  font-size: 13.5px; font-weight: 600; color: #dde1ee;
+  margin-bottom: 10px;
+}
+/* 标题前的渐变小竖条，比 emoji 图标更耐看也不受字体影响 */
+.card-title::before {
+  content: "";
+  width: 3px; height: 14px;
+  border-radius: 2px;
+  background: linear-gradient(#fe2c55, #25f4ee);
+}
+.card-title .right {
+  margin-left: auto;
+  font-size: 11.5px; font-weight: 400; color: #8b93a7;
+}
+
+/* ─────────────── 数字格 ─────────────── */
+
+.stats { display: flex; gap: 9px; }
+.stat {
+  flex: 1;
+  text-align: center;
+  padding: 10px 4px 8px;
+  border-radius: 11px;
+  background: rgba(255, 255, 255, .04);
+  border: 1px solid rgba(255, 255, 255, .05);
+}
+.stat .num { font-size: 21px; font-weight: 700; line-height: 1.2; }
+.stat .lbl { font-size: 10.5px; color: #8b93a7; margin-top: 2px; }
+.num.ok   { color: #4ee7a8; }
+.num.err  { color: #ff7676; }
+.num.warn { color: #ffc06b; }
+.num.cyan { color: #25f4ee; }
+
+/* ─────────────── 键值行 ─────────────── */
+
+.kv {
+  display: flex;
+  font-size: 12.5px;
+  padding: 5px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, .06);
+}
+.kv:last-child { border-bottom: 0; }
+.kv .k { width: 116px; flex-shrink: 0; color: #8b93a7; }
+.kv .v { flex: 1; color: #e9ebf2; word-break: break-all; }
+.kv .v.dim { color: #8b93a7; }
+.mono { font-family: "Cascadia Mono", Consolas, "Courier New", monospace; font-size: 12px; }
+
+/* ─────────────── 列表行（账号 / 好友） ─────────────── */
+
+.row {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12.5px;
+  padding: 6px 0;
+  border-bottom: 1px dashed rgba(255, 255, 255, .06);
+}
+.row:last-child { border-bottom: 0; }
+.dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  flex-shrink: 0;
+  background: #ff7676;
+}
+.dot.on   { background: #4ee7a8; box-shadow: 0 0 7px rgba(78, 231, 168, .6); }
+.dot.idle { background: #8b93a7; }
+.row .name {
+  width: 104px; flex-shrink: 0; font-weight: 600;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row .desc {
+  flex: 1; color: #8b93a7;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.row .tail { flex-shrink: 0; font-size: 11.5px; color: #cfd4e4; }
+
+.empty {
+  text-align: center; padding: 12px 0;
+  font-size: 12.5px; color: #8b93a7;
+}
+.empty .cmd { color: #25f4ee; }
+
+/* ─────────────── 指令清单 ─────────────── */
+
+.cmd-group + .cmd-group { margin-top: 9px; }
+.cmd-group-name {
+  font-size: 11.5px; color: #25f4ee; font-weight: 600;
+  margin-bottom: 4px;
+}
+.cmd-item {
+  display: flex; align-items: baseline; gap: 8px;
+  font-size: 12.5px;
+  padding: 3px 0;
+}
+.cmd-item .cmd {
+  flex-shrink: 0;
+  min-width: 168px;
+  color: #ffd0da;
+  font-family: "Cascadia Mono", Consolas, "Courier New", monospace;
+  font-size: 12px;
+}
+.cmd-item .txt { color: #9aa2b8; flex: 1; }
+.cmd-item .txt b { color: #dde1ee; font-weight: 600; }
+
+/* ─────────────── 提示条 ─────────────── */
+
+.note {
+  margin-top: 2px;
+  padding: 9px 12px;
+  border-radius: 11px;
+  border-left: 3px solid #fe2c55;
+  background: rgba(254, 44, 85, .09);
+  font-size: 11.5px; color: #cfd4e4; line-height: 1.8;
+}
+.note.cyan { border-left-color: #25f4ee; background: rgba(37, 244, 238, .08); }
+.note .hl { color: #25f4ee; }
+
+/* ─────────────── 页脚 ─────────────── */
+
+.foot {
+  display: flex; align-items: center; justify-content: center; gap: 5px;
+  margin-top: 12px;
+  font-size: 10.5px; color: #5d6478;
+}
+.foot-name { color: #7b839a; }
+.foot-ver {
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(255, 255, 255, .06);
+  color: #9aa2b8;
+}

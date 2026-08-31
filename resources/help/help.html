@@ -1,0 +1,20 @@
+{{extend defaultLayout}}
+{{block 'main'}}
+
+{{each groups g}}
+<div class="card">
+  <div class="card-title">{{g.name}}{{if g.right}}<span class="right">{{g.right}}</span>{{/if}}</div>
+  {{each g.items it}}
+  <div class="cmd-item">
+    <span class="cmd">{{it.cmd}}</span>
+    <span class="txt">{{@it.txt}}</span>
+  </div>
+  {{/each}}
+</div>
+{{/each}}
+
+<div class="note">
+  {{@tip}}
+</div>
+
+{{/block}}

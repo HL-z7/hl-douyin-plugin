@@ -1,0 +1,13 @@
+node_modules/
+*.log
+.DS_Store
+
+# 运行时数据：抖音账号 Cookie（已加密）、主密钥、审计日志、失败截图
+# 前导斜杠必须有：不加会连 resources/data/yiyan.json 一起忽略掉
+/data/
+
+# 运行时生成，会带上用户自己的群号/域名，默认值都在 lib/config.js 里
+/config/
+
+# 编辑备份
+*.bak

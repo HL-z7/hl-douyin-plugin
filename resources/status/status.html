@@ -1,0 +1,47 @@
+{{extend defaultLayout}}
+{{block 'main'}}
+
+<div class="card">
+  <div class="card-title">账号概览<span class="right">本机器人</span></div>
+  <div class="stats">
+    <div class="stat"><div class="num">{{spark.total}}</div><div class="lbl">账号总数</div></div>
+    <div class="stat"><div class="num ok">{{spark.enabled}}</div><div class="lbl">已启用</div></div>
+    <div class="stat"><div class="num cyan">{{spark.targets}}</div><div class="lbl">续火好友</div></div>
+    <div class="stat"><div class="num {{spark.invalid ? 'err' : ''}}">{{spark.invalid}}</div><div class="lbl">凭证失效</div></div>
+    <div class="stat"><div class="num warn">{{spark.doneToday}}</div><div class="lbl">今日已续</div></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-title">定时与推送</div>
+  {{each infoRows row}}
+  <div class="kv">
+    <span class="k">{{row.k}}</span>
+    <span class="v {{row.mono ? 'mono' : ''}} {{row.dim ? 'dim' : ''}}">{{row.v}}</span>
+  </div>
+  {{/each}}
+</div>
+
+<div class="card">
+  <div class="card-title">账号明细<span class="right">共 {{accounts.length}} 个</span></div>
+  {{if accounts.length}}
+    {{each accounts a}}
+    <div class="row">
+      <span class="dot {{a.state}}"></span>
+      <span class="name">{{a.name}}</span>
+      <span class="desc">{{a.friends}}</span>
+      <span class="tail">{{a.result}}</span>
+    </div>
+    {{/each}}
+  {{else}}
+    <div class="empty">还没有抖音账号，发送 <span class="cmd">#抖音登录</span> 开始</div>
+  {{/if}}
+</div>
+
+<div class="note cyan">
+  <span class="hl">#抖音续火</span> 立即执行一次 ｜
+  <span class="hl">#抖音web</span> 打开可视化面板 ｜
+  <span class="hl">#抖音帮助</span> 查看全部指令
+</div>
+
+{{/block}}

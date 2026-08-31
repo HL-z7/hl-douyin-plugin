@@ -1,0 +1,30 @@
+{{extend defaultLayout}}
+{{block 'main'}}
+
+{{each sections sec}}
+<div class="card">
+  <div class="card-title">{{sec.name}}{{if sec.right}}<span class="right">{{sec.right}}</span>{{/if}}</div>
+  {{each sec.rows row}}
+  <div class="kv">
+    <span class="k">{{row.k}}</span>
+    <span class="v {{row.mono ? 'mono' : ''}} {{row.dim ? 'dim' : ''}}">{{row.v}}</span>
+  </div>
+  {{/each}}
+</div>
+{{/each}}
+
+<div class="card">
+  <div class="card-title">可直接改的项<span class="right">指令</span></div>
+  {{each commands it}}
+  <div class="cmd-item">
+    <span class="cmd">{{it.cmd}}</span>
+    <span class="txt">{{@it.txt}}</span>
+  </div>
+  {{/each}}
+</div>
+
+<div class="note cyan">
+  {{@tip}}
+</div>
+
+{{/block}}

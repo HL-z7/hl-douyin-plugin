@@ -64,6 +64,9 @@ export class DouyinLogin extends plugin {
         onStatus: async (status, message) => {
           if (status === "success") await e.reply(`✅ ${message}，可发送「#抖音账号」查看`)
           else if (status === "scanned") await e.reply("📱 已收到扫码，请在手机上点「确认登录」")
+          // 确认之后 Cookie 还要等页面跳一趟才落盘，这一句避免用户以为又卡住了
+          else if (status === "confirmed") await e.reply("🔑 已确认登录，正在取凭证，请稍等几秒…")
+          else if (status === "verify") await e.reply(`⚠️ ${message}`)
           else if (["failed", "expired"].includes(status)) await e.reply(`❌ ${message}`)
         },
       })

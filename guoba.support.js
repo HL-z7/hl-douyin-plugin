@@ -2,7 +2,11 @@ import lodash from "lodash"
 import { config, DEFAULT_CONFIG, PUSH_TARGETS } from "./lib/config.js"
 import { scheduler } from "./lib/scheduler.js"
 import { PLACEHOLDERS, normalizeTemplate } from "./lib/template.js"
-import { log, toError } from "./lib/util.js"
+import { store, normalizeTargets, targetText, parseCookieInput, assertLoginCookie } from "./lib/store.js"
+import { manualLogin } from "./lib/login.js"
+import { pickDefaultBot } from "./lib/bot.js"
+import { audit } from "./lib/audit.js"
+import { log, toError, formatTime } from "./lib/util.js"
 
 /**
  * 锅巴配置支持（锅巴会自动扫描 plugins/<name>/guoba.support.js）
@@ -10,6 +14,10 @@ import { log, toError } from "./lib/util.js"
  * 复用而非另起一套：读写都走 lib/config.js 的同一个 Config 单例，
  * 所以锅巴、Web 面板、#抖音设置 三处改的是同一份 config/config.yaml，
  * 保存后顺手 reschedule()，改完 cron 不用重启。
+ *
+ * 账号那一节是个例外：Cookie 与续火好友不在 config.yaml 里（在
+ * data/accounts/<botId>.json，且 Cookie 是加密的），所以它不走上面那条
+ * 扁平点路径的通道，而是像 pushGroups 一样单独映射到 lib/store.js。
  */
 
 const PH = PLACEHOLDERS.map(p => `{{${p}}}`).join(" ")
@@ -34,6 +42,138 @@ function formToTargets(list, field) {
     .filter(item => item[field])
 }
 
+// ────────────────────────────── 账号子表单 ──────────────────────────────
+
+/**
+ * 上一次交给锅巴的账号 id 集合。
+ *
+ * 子表单里删掉一张卡片，前端只是把它从数组里去掉，保存时我们收到的是「少了一行」，
+ * 光看提交内容分不清「用户删了它」和「它是保存期间新登录进来的」。所以记下发出去
+ * 那一刻的快照：只有当时就在列表里、如今不在提交里的账号才算被删。
+ * 快照之后扫码登录新增的账号不在集合里，不会被误删。
+ */
+let lastAccountIds = new Set()
+
+/** Cookie 现状的一句话，只读展示。密文与明文都不出现在这里 */
+function describeCookie(acc) {
+  if (!acc.hasCookie) return "未配置，请在下方粘贴 Cookie"
+  if (acc.cookieInvalid) return "已失效，请重新粘贴 Cookie 或扫码登录"
+  const at = acc.cookieUpdatedAt ? `，更新于 ${formatTime(acc.cookieUpdatedAt)}` : ""
+  return `已配置${at}`
+}
+
+/**
+ * 把所有机器人下的账号摊平成锅巴子表单的行。
+ *
+ * Cookie 一律不回填（`cookie: ""`）：它等同于账号本体，锅巴面板是浏览器里的页面，
+ * 回填就意味着密文会随接口发到前端。留空同时也是「不修改」的语义，
+ * 用户只想改续火好友时不必重新粘一遍 Cookie。
+ */
+function accountsToForm() {
+  const rows = []
+  const ids = new Set()
+  for (const botId of store.allBots())
+    for (const acc of store.list(botId)) {
+      ids.add(`${botId}:${acc.id}`)
+      rows.push({
+        botId: String(botId),
+        id: acc.id,
+        name: acc.name,
+        enable: acc.enable !== false,
+        cookieState: describeCookie(acc),
+        cookie: "",
+        targets: (acc.targets || []).map(targetText).join("、"),
+        messageTemplate: acc.messageTemplate || "",
+        note: acc.note || "",
+      })
+    }
+  lastAccountIds = ids
+  return rows
+}
+
+/**
+ * 保存账号子表单。
+ *
+ * 分两趟：先把所有行校验完（账号名、归属机器人、Cookie 格式、模板占位符），
+ * 再统一落盘。一趟边校验边写的话，第三行的 Cookie 格式错误会留下前两行已改、
+ * 后面全没改的半截状态，而锅巴只会显示一句报错。
+ *
+ * @returns {string[]} 给用户看的结果摘要
+ */
+function saveAccounts(rows) {
+  const fallbackBot = pickDefaultBot()
+  const plans = []
+  const seen = new Set()
+  const kept = new Set()
+  const allowCookie = config.bool("security.allowManualCookie", true)
+
+  for (const row of rows || []) {
+    const name = String(row?.name ?? "").trim()
+    if (!name) throw new Error("账号名称不能为空")
+
+    const botId = String(row?.botId ?? "").trim() || fallbackBot
+    if (!botId)
+      throw new Error(`账号「${name}」没有归属机器人：当前没有在线的机器人，请在「机器人QQ号」里手动填写`)
+
+    // 同一台机器人下账号名唯一（store.upsert 把同名视为更新，重名行会互相覆盖）
+    const key = `${botId}:${name}`
+    if (seen.has(key)) throw new Error(`机器人 ${botId} 下有两行都叫「${name}」，请改名或删掉一行`)
+    seen.add(key)
+
+    // id 只在该机器人下确实存在时才认：改了「机器人QQ号」的行等于搬到新机器人下新建
+    const id = String(row?.id ?? "").trim()
+    const existing = id && store.get(botId, id) ? id : ""
+    if (existing) kept.add(`${botId}:${existing}`)
+
+    const cookie = String(row?.cookie ?? "").trim()
+    if (cookie) {
+      if (!allowCookie)
+        throw new Error("「允许手动导入 Cookie」当前是关闭的，请先打开该开关并保存，再回来粘贴 Cookie")
+      // 格式错误在这里就报出来，不要等写盘时才发现
+      assertLoginCookie(parseCookieInput(cookie))
+    }
+
+    plans.push({
+      botId,
+      cookie,
+      input: {
+        id: existing || undefined,
+        name,
+        enable: row?.enable !== false,
+        targets: normalizeTargets(row?.targets),
+        messageTemplate: normalizeTemplate(row?.messageTemplate, `账号「${name}」的消息模板`),
+        note: String(row?.note ?? ""),
+      },
+    })
+  }
+
+  const summary = []
+  for (const plan of plans) {
+    // 先写普通字段（含改名），再导 Cookie。顺序反过来的话，改名行会因为
+    // manualLogin 按新名字找不到账号而多建一个
+    const account = store.upsert(plan.botId, plan.input)
+    if (plan.cookie) {
+      // 走 manualLogin 而不是直接 store.upsert：allowManualCookie 开关与审计都在它里面
+      manualLogin(plan.botId, { name: account.name, cookie: plan.cookie, source: "guoba" })
+      summary.push(`${account.name} 的 Cookie 已更新`)
+    }
+  }
+
+  // 打开面板时在列表里、这次提交没带回来的，就是被用户删掉的卡片
+  for (const key of lastAccountIds) {
+    if (kept.has(key)) continue
+    const [botId, accountId] = key.split(":")
+    const acc = store.get(botId, accountId)
+    if (!acc) continue
+    store.remove(botId, accountId)
+    audit.add("account.remove", { botId, accountId, account: acc.name, source: "guoba" })
+    summary.push(`已删除 ${acc.name} 及其 Cookie`)
+  }
+  lastAccountIds = kept
+
+  return summary
+}
+
 export function supportGuoba() {
   return {
     pluginInfo: {
@@ -50,6 +190,85 @@ export function supportGuoba() {
 
     configInfo: {
       schemas: [
+        { component: "Divider", label: "抖音账号与 Cookie" },
+        {
+          field: "accounts",
+          label: "抖音账号",
+          bottomHelpMessage:
+            "点进去可增删账号、粘贴 Cookie、配续火好友。多账号就多加几行，定时续火会逐个跑（串行，避免同时开多个浏览器触发风控）。删掉卡片并保存即删除该账号与它的 Cookie。Cookie 加密存在 data/accounts/<机器人QQ>.json，这里永远不回填，留空表示不修改",
+          component: "GSubForm",
+          componentProps: {
+            multiple: true,
+            modalProps: { title: "抖音账号" },
+            schemas: [
+              {
+                field: "name",
+                label: "账号名称",
+                bottomHelpMessage: "自己起的名字，用于指令与推送里指代这个账号。同一机器人下不能重名",
+                component: "Input",
+                required: true,
+              },
+              {
+                field: "botId",
+                label: "机器人QQ号",
+                bottomHelpMessage:
+                  "这个抖音账号归哪台机器人管。留空 = 当前在线的第一台。改了这里等于把账号搬到另一台机器人下",
+                component: "Input",
+              },
+              {
+                field: "id",
+                label: "账号ID",
+                bottomHelpMessage:
+                  "只读，保存时自动生成。改账号名时靠它认出改的是哪一个，清空会当成新账号",
+                component: "Input",
+                componentProps: { disabled: true },
+              },
+              {
+                field: "cookieState",
+                label: "Cookie 现状",
+                bottomHelpMessage: "只读。想换 Cookie 请填下面那一栏",
+                component: "Input",
+                componentProps: { disabled: true },
+              },
+              {
+                field: "cookie",
+                label: "粘贴 Cookie",
+                bottomHelpMessage:
+                  "浏览器登录抖音 → F12 → Console → document.cookie → 复制结果。也吃 EditThisCookie 导出的 JSON。留空 = 不修改。必须含 sessionid，否则保存时会被拒绝",
+                component: "InputTextArea",
+                componentProps: { rows: 3, placeholder: "sessionid=xxx; sessionid_ss=xxx; ..." },
+              },
+              {
+                field: "targets",
+                label: "续火好友",
+                bottomHelpMessage:
+                  "顿号分隔多个。每个可写 主名=别名1=别名2(备注)，好友改名后用别名也能搜到，命中别名会自动把它提为主名",
+                component: "InputTextArea",
+                componentProps: { rows: 2, placeholder: "张三=小三三(表妹)、李四" },
+              },
+              {
+                field: "messageTemplate",
+                label: "该账号的消息模板",
+                bottomHelpMessage: `留空则用全局模板。可用占位符：${PH}`,
+                component: "InputTextArea",
+                componentProps: { rows: 2 },
+              },
+              {
+                field: "enable",
+                label: "启用",
+                bottomHelpMessage: "关掉后定时续火跳过这个账号，账号与 Cookie 都保留",
+                component: "Switch",
+              },
+              {
+                field: "note",
+                label: "备注",
+                bottomHelpMessage: "只给自己看，不参与任何逻辑",
+                component: "Input",
+              },
+            ],
+          },
+        },
+
         { component: "Divider", label: "定时续火" },
         {
           field: "spark.enable",
@@ -363,6 +582,7 @@ export function supportGuoba() {
           ...lodash.cloneDeep(data),
           pushGroups: targetsToForm(data.push?.groups, "groupId"),
           pushFriends: targetsToForm(data.push?.friends, "userId"),
+          accounts: accountsToForm(),
         }
       },
 
@@ -371,7 +591,7 @@ export function supportGuoba() {
         try {
           const patch = {}
           for (const [keyPath, value] of Object.entries(data || {})) {
-            if (keyPath === "pushGroups" || keyPath === "pushFriends") continue
+            if (["pushGroups", "pushFriends", "accounts"].includes(keyPath)) continue
             lodash.set(patch, keyPath, value)
           }
 
@@ -403,6 +623,12 @@ export function supportGuoba() {
           if (entries["spark.messageTemplate"])
             normalizeTemplate(entries["spark.messageTemplate"], "全局消息模板")
 
+          // 账号先落盘：它有可能因为 Cookie 格式不对而整体失败，
+          // 放在 config.setMany 之前，失败时配置也保持原样，用户重来一次就行。
+          // 锅巴的 handleFormValues 会把空数组整个丢掉，所以「删光了所有账号」到这里
+          // 是 data.accounts === undefined，必须当成空列表处理，否则最后一个账号删不掉
+          const accountNotes = saveAccounts(data?.accounts || [])
+
           config.setMany(entries)
 
           const job = scheduler.reschedule()
@@ -410,7 +636,11 @@ export function supportGuoba() {
             return Result.ok({}, `已保存，但 cron「${config.get("spark.cron")}」无效，定时任务未注册`)
 
           const status = scheduler.status()
-          return Result.ok({}, status.registered ? `保存成功，下次续火 ${status.nextTime}` : "保存成功")
+          const tail = accountNotes.length ? `；${accountNotes.join("；")}` : ""
+          return Result.ok(
+            {},
+            (status.registered ? `保存成功，下次续火 ${status.nextTime}` : "保存成功") + tail
+          )
         } catch (error) {
           log("error", "锅巴保存配置失败：", toError(error).message)
           return Result.error(toError(error).message)

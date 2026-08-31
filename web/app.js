@@ -353,6 +353,8 @@ function pollQr() {
         $("qrImg").classList.remove("hide")
       }
       $("qrHint").textContent = s.message || s.status
+      // expired 只由「整个会话超时」产生，是终态。单张二维码过期不会走到这里——
+      // 后端把状态放回 waiting 并推新图，上面的 src 比较会自动换图，轮询要继续
       if (["success", "failed", "expired", "canceled"].includes(s.status)) {
         clearInterval(state.qrTimer)
         state.qrSid = ""

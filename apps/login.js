@@ -43,19 +43,27 @@ export class DouyinLogin extends plugin {
   /** 扫码登录：二维码用图片发回，状态变化再补一条 */
   async qrLogin(e) {
     const name = e.msg.replace(/^#?(dy|抖音)(扫码)?登录\s*/, "").trim()
+    const waitSec = config.num("security.qrLoginTimeout", 180, { min: 30, max: 600 })
     await e.reply("正在启动浏览器获取抖音二维码，请稍候…")
 
     let replied = false
     try {
       await startQrLogin(e.self_id, {
         accountName: name,
-        onQrcode: async base64 => {
+        // 抖音的二维码约 60 秒换一张，换了就补发——QQ 里那张图不会自己更新，
+        // 用户扫到作废的码会一直等不到结果
+        onQrcode: async (base64, round) => {
           replied = true
           const buffer = Buffer.from(base64.split(",")[1] || "", "base64")
-          await e.reply([segment.image(buffer), "\n请用抖音 App 扫码并确认登录，完成后会自动保存 Cookie"])
+          const tip =
+            round > 1
+              ? "\n上一张二维码已过期，请扫这张新的"
+              : `\n请用抖音 App 扫码并确认登录，完成后会自动保存 Cookie。\n本次登录最多等待 ${waitSec} 秒，超时后重新发送指令即可。`
+          await e.reply([segment.image(buffer), tip])
         },
         onStatus: async (status, message) => {
           if (status === "success") await e.reply(`✅ ${message}，可发送「#抖音账号」查看`)
+          else if (status === "scanned") await e.reply("📱 已收到扫码，请在手机上点「确认登录」")
           else if (["failed", "expired"].includes(status)) await e.reply(`❌ ${message}`)
         },
       })
@@ -63,11 +71,11 @@ export class DouyinLogin extends plugin {
       return e.reply(`扫码登录启动失败：${toError(error).message}`)
     }
 
-    // 15 秒还没出码就提示一声，别让用户干等
+    // 出码要真开浏览器加载抖音首页，实测 20 秒上下，25 秒还没动静才提示一声
     setTimeout(() => {
       if (!replied)
         e.reply("二维码仍在获取中，若长时间无响应可改用「#抖音文件登录 账号名」").catch(() => {})
-    }, 15000)
+    }, 25000)
   }
 
   /** 手动登录：群里出现 Cookie 属于泄露，直接拒收并提示撤回 */

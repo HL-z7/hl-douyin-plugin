@@ -20,9 +20,19 @@ TRSS-Yunzai 抖音自动续火插件。定时给抖音好友发消息保住火�
 
 ## 安装
 
-插件放到 `plugins/hl-douyin-plugin`，然后重启 Yunzai。
+在 Yunzai 根目录执行：
+
+- gitee
+
+``` bash
+git clone --depth 1 https://gitee.com/fox-glaze/hl-douyin-plugin ./plugins/hl-douyin-plugin
+```
+
+然后重启 Yunzai。
 
 无需 `npm install`：依赖全部复用 Yunzai 自带的 puppeteer / express / node-schedule / yaml / lodash，插件自己不引入新包。
+
+装好后 `#抖音更新` 就能拉取新代码并自动重启，不必再手动 `git pull`。
 
 首次启动会自动生成：
 

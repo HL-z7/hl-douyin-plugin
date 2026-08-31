@@ -209,6 +209,8 @@ QQ 输入框会截断超长文本，而抖音的完整 Cookie 常常超过限制
 
 **二维码一直不出** — 抖音登录弹窗结构偶尔变动。`spark.headless` 改成 `false` 看一眼实际页面，或退回文件/手动导入 Cookie。
 
+**报 `createBrowserContext is not a function`** — 装的是 puppeteer v22 之前的版本。插件已带兼容层自动退回旧 API，遇到这条说明用的是旧代码，`#抖音更新` 拉一下即可。
+
 **配了群却没推送** — 先看 `push.target`：选了「仅群」时好友列表不收，反之同理。`#抖音状态` 的「推送范围」一栏就是当前生效值。
 
 **改了 cron 没生效** — 不需要重启。插件自己持有定时任务，锅巴/面板/指令保存后会立刻重新注册；`#抖音状态` 里的「下次执行」就是当前生效的时间。
@@ -269,6 +271,17 @@ hl-douyin-plugin/
 **为什么扫码登录没嵌入现成项目** — 备选项要么自带一整套浏览器栈（Playwright，本仓库没装），要么是 Rust/Java 独立进程，要么走逆向签名接口。而抖音扫码本身就是两个公开接口：`get_qrcode` 出图、`check_qrconnect` 出状态，在我们自己的 puppeteer 会话里拦这两个响应就能拿到二维码和结果，Cookie 直接落在同一个 browserContext 里，不需要第二套浏览器或新依赖。
 
 **为什么多账号是串行跑** — 并行会同时开多个 Chromium，既吃内存又容易触发抖音风控。
+
+**为什么 puppeteer 的调用要探测再用** — Yunzai 根 `package.json` 里 puppeteer 写的是 `"*"`，实际装到哪个大版本取决于用户机器，而这几个 API 各改过一次名字或位置：
+
+| 用途 | 新 API | 旧 API |
+| --- | --- | --- |
+| 建隔离上下文 | `browser.createBrowserContext()`（v22+） | `createIncognitoBrowserContext()` |
+| 写 Cookie | `context.setCookie()`（v23+） | `page.setCookie()` |
+| 读 Cookie | `context.cookies()`（v23+） | CDP `Network.getAllCookies` |
+| 连接状态 | `browser.connected`（v22+） | `browser.isConnected()` |
+
+写死新 API 在装了旧版的机器上就是 `createBrowserContext is not a function`，所以 `lib/browser.js` 顶部有一层探测分派。读 Cookie 的旧路径特意走 CDP 而不是 `page.cookies()`：后者只返回当前 URL 域下的 Cookie，而扫码会在 `douyin.com` 与 `sso.douyin.com` 之间跳，漏子域等于丢 `sessionid`。
 
 **为什么 `index.js` 只做导入** — loader 的 `getPlugins()` 见到插件目录里有 `index.js` 就只导入它并跳过其余 .js（`lib/plugins/loader.js:56`），所以指令想拆文件必须由 index.js 自己扫 `apps/` 并导出 `apps` 对象（`importPlugin()` 会把 `app.apps` 摊平）。键名用 `文件名.导出名`，一个文件里放多个插件类也不会互相覆盖。
 

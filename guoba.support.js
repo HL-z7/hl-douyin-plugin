@@ -371,6 +371,15 @@ export function supportGuoba() {
           componentProps: { min: 0, max: 1440 },
         },
 
+        {
+          field: "spark.browserIdleClose",
+          label: "浏览器空闲多久关闭(秒)",
+          bottomHelpMessage:
+            "页面全关完之后延时收掉浏览器实例，释放那 200~400MB 内存。给 60 秒是为了跨过续火在两个账号之间的间隔（页面刚关但马上要再开），不至于每个账号都重启一次浏览器。0 = 一直留着",
+          component: "InputNumber",
+          componentProps: { min: 0, max: 3600 },
+        },
+
         { component: "Divider", label: "结果推送" },
         {
           field: "push.enable",

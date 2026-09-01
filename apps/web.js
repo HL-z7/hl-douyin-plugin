@@ -10,6 +10,7 @@ import { toError } from "../lib/util.js"
 import { audit } from "../lib/audit.js"
 import { issueCode, revokeCodes, destroyUserSessions } from "../lib/auth.js"
 import { revokeUserTickets } from "../lib/remote.js"
+import { cancelUserSessions } from "../lib/login.js"
 import { mastersOf, sendPrivate, listBots } from "../lib/bot.js"
 
 export class DouyinWeb extends plugin {
@@ -66,8 +67,18 @@ export class DouyinWeb extends plugin {
     const sessions = destroyUserSessions(e.user_id)
     // 远程验证链接也是「发给这个人的、还能用的东西」，一起清掉才算真的下线
     const tickets = revokeUserTickets(e.user_id)
+    /*
+     * 还在跑的登录会话也要一起终止。
+     *
+     * 光撕票据只是让链接打不开，那个浏览器页面还开着占内存，超时兜底也还挂着——
+     * 于是人早就下线了，十分钟后照旧收到一句「❌ 抖音要求的验证在 10 分 0 秒内没有
+     * 完成」。会话走 canceled 终态之后 cleanup 会摘掉定时器，那条提示不会再发。
+     */
+    const logins = await cancelUserSessions(e.user_id)
     const parts = [`已作废 ${codes} 个验证码、${sessions} 个面板会话`]
     if (tickets) parts.push(`${tickets} 个验证链接`)
-    return e.reply(parts.join("、"))
+    if (logins) parts.push(`并终止 ${logins} 个进行中的登录会话（浏览器已关闭，不会再有超时提示）`)
+    // 这句就是「下线提示」本身：指令在哪发的就回哪，群里发的群里可见
+    return e.reply(parts.join("、"), true)
   }
 }

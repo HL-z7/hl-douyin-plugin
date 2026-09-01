@@ -47,8 +47,12 @@ input:focus{outline:0;border-color:var(--brand)}
 .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .screen{position:relative;background:#000;border:1px solid var(--line);
   border-radius:10px;overflow:hidden;min-height:180px}
-/* touch-action:none 是必须的：不关掉浏览器的滚动手势，手机上根本拖不出滑块轨迹 */
-.screen img{display:block;width:100%;touch-action:none;user-select:none;-webkit-user-drag:none}
+/* touch-action:none 是必须的：不关掉浏览器的滚动手势，手机上根本拖不出滑块轨迹。
+   -webkit-touch-callout:none 挡掉手机长按图片弹出的「保存图片」菜单——桌面端靠下面
+   的 contextmenu 监听，移动端只有这个属性管得住。有了这两条与 user-select，
+   pointerdown 里就不需要 preventDefault() 了（它会连带吃掉 click 事件，见脚本注释）。 */
+.screen img{display:block;width:100%;touch-action:none;user-select:none;
+  -webkit-user-drag:none;-webkit-touch-callout:none}
 .screen .mask{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
   background:rgba(15,17,22,.72);color:var(--muted);text-align:center;padding:20px}
 .dotmark{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;
@@ -87,6 +91,12 @@ input:focus{outline:0;border-color:var(--brand)}
       输入前先点一下页面上的输入框，让光标落进去。画面每秒刷新一次，
       点击后可能要等一两帧才看到变化。
     </p>
+    <!--
+      最近一次操作的去向。不是调试残留：这个页面唯一的反馈是那张一秒一换的截图，
+      而「点了没发出去」和「发出去了但远端没动」在画面上长得一模一样，出问题时
+      没有这一行就只能靠猜。这里只记动作类型与坐标，输入的内容一个字都不显示。
+    -->
+    <p class="tip mono" id="lastAct" style="margin-top:6px"></p>
   </div>
 
   <div class="card">
@@ -124,6 +134,18 @@ function setState(text, kind) {
   const el = $("state")
   el.textContent = text
   el.className = "tag" + (kind ? " " + kind : "")
+}
+
+/**
+ * 记一行「最近一次操作」。带时刻，因为同一句话连着出现两次时看不出是新的还是旧的。
+ * 内容永不进这里：只写动作类型、归一化坐标、字数。
+ */
+function say(text) {
+  const now = new Date()
+  const hh = String(now.getHours()).padStart(2, "0")
+  const mm = String(now.getMinutes()).padStart(2, "0")
+  const ss = String(now.getSeconds()).padStart(2, "0")
+  $("lastAct").textContent = `${hh}:${mm}:${ss} ${text}`
 }
 
 function showMask(text) {
@@ -193,84 +215,212 @@ function tickLeft() {
  * 一律发 0~1 的相对值，服务端再乘真实视口尺寸。这张图会被 CSS 缩放（手机屏幕比
  * 1280 窄得多），两边各自算缩放比就一定会对不齐，而点偏一点在「输入框」和
  * 「换一张」之间就是天壤之别。归一化之后这边只需要一次除法。
+ *
+ * 收的是裸坐标而不是 event：下面三条手势链路（pointer / touch / mouse）取坐标的
+ * 位置各不相同（touch 在 touches[0] 上），统一成两个数就不用各写一遍。
  */
-function norm(event) {
+function normXY(clientX, clientY) {
   const rect = frame.getBoundingClientRect()
   return {
-    x: Math.min(1, Math.max(0, (event.clientX - rect.left) / (rect.width || 1))),
-    y: Math.min(1, Math.max(0, (event.clientY - rect.top) / (rect.height || 1))),
+    x: Math.min(1, Math.max(0, (clientX - rect.left) / (rect.width || 1))),
+    y: Math.min(1, Math.max(0, (clientY - rect.top) / (rect.height || 1))),
   }
 }
 
 /** 点在哪就在哪冒一个圈：截图要等下一帧才更新，没有这个反馈会让人以为没点上 */
-function ripple(event) {
+function rippleAt(clientX, clientY) {
   const rect = screenBox.getBoundingClientRect()
   const dot = document.createElement("div")
   dot.className = "dotmark"
-  dot.style.left = event.clientX - rect.left + "px"
-  dot.style.top = event.clientY - rect.top + "px"
+  dot.style.left = clientX - rect.left + "px"
+  dot.style.top = clientY - rect.top + "px"
   screenBox.appendChild(dot)
   setTimeout(() => dot.remove(), 500)
 }
 
 async function act(body) {
   if (stopped) return
+  // 只描述动作，不描述内容——输进去的可能是短信验证码
+  const label =
+    body.type === "click" || body.type === "dblclick"
+      ? `点击 ${body.x.toFixed(3)},${body.y.toFixed(3)}`
+      : body.type === "drag"
+        ? `拖动 ${body.points.length} 点`
+        : body.type === "type"
+          ? `输入 ${body.text.length} 字`
+          : body.type === "key"
+            ? `按键 ${body.key}`
+            : body.type === "scroll"
+              ? `滚动 ${Math.round(body.dy)}`
+              : body.type
+  say(label + " 发送中…")
   try {
     await call("/act", body)
+    say(label + " 已送达远端")
     // 操作完立刻补一帧，不必干等下一次轮询
     pull()
   } catch (error) {
+    say(label + " 失败：" + error.message)
     toast("操作失败：" + error.message)
   }
 }
 
 /* ---------- 点击与拖动 ----------
- * 同一套 pointer 事件同时覆盖鼠标和手指：按下到抬起之间移动超过阈值就当拖动，
- * 否则当点击。拖动把整条轨迹连时间戳一起发过去——滑块验证判的就是这条曲线，
- * 用代码生成的匀速直线基本过不去，而这里原样重放的是真实人手轨迹。
+ * 按下到抬起之间移动超过阈值就当拖动，否则当点击。拖动把整条轨迹连时间戳一起发
+ * 过去——滑块验证判的就是这条曲线，用代码生成的匀速直线基本过不去，而这里原样
+ * 重放的是真实人手轨迹。
+ *
+ * 为什么三套事件全都注册、而不是按能力挑一套：
+ *
+ * 这条链接是从 QQ 私信里点开的，落在哪个内核里完全不可控。按能力挑会两头踩空——
+ * 「有 window.PointerEvent」不代表真的派发 pointerdown（QQ 内置浏览器里见过有构造
+ * 函数但不发事件的组合，表现就是整块画面点下去毫无反应、也没有任何报错）；而
+ * 「`ontouchstart` in window」在带触摸屏的 Windows 笔记本上同样为真，那里的人却是
+ * 用鼠标操作的，只注册 touch 就等于拖不动滑块。
+ *
+ * 所以 pointer / touch / mouse 三条链路一起挂，靠 owner 去重：谁先开起这次手势就
+ * 由谁负责到底，另外两条看到 owner 已被占就直接返回。浏览器的派发顺序是
+ * pointerdown → touchstart → mousedown，能力最强的那条天然先到。
  */
 const DRAG_THRESHOLD = 6
 let track = null
+/** 本次手势由哪条链路接管（"pointer" / "touch" / "mouse"），空串表示没有手势在进行 */
+let owner = ""
+/** 上一次手势正常收尾的时刻。给末尾的 click 兜底判重用 */
+let lastEndAt = 0
 
-frame.addEventListener("pointerdown", event => {
-  if (stopped) return
-  event.preventDefault()
-  frame.setPointerCapture?.(event.pointerId)
-  track = { start: Date.now(), sx: event.clientX, sy: event.clientY, moved: false, points: [] }
-  const p = norm(event)
-  track.points.push({ x: p.x, y: p.y, t: 0 })
-})
+/**
+ * 手势开了头却迟迟不结束 —— 有的内核会把 up 和 cancel 一起吞掉，owner 就一直占着。
+ * 超过 3 秒一律当它已经死了：真实的点与拖都在这个量级以内，滑块拖得再慢也不会
+ * 按住三秒不动。
+ */
+function trackStale() {
+  return Boolean(track) && Date.now() - track.start > 3000
+}
 
-frame.addEventListener("pointermove", event => {
-  if (!track) return
-  if (Math.abs(event.clientX - track.sx) > DRAG_THRESHOLD || Math.abs(event.clientY - track.sy) > DRAG_THRESHOLD)
+/** 按下：开一条轨迹。已经有别的链路在处理这次手势就不掺和 */
+function beginTrack(source, clientX, clientY) {
+  if (stopped) return false
+  if (owner && !trackStale()) return false
+  owner = source
+  const p = normXY(clientX, clientY)
+  track = { start: Date.now(), sx: clientX, sy: clientY, moved: false, points: [{ x: p.x, y: p.y, t: 0 }] }
+  return true
+}
+
+/** 移动：记点，并判断这次到底是点还是拖 */
+function moveTrack(source, clientX, clientY) {
+  if (!track || owner !== source) return
+  if (Math.abs(clientX - track.sx) > DRAG_THRESHOLD || Math.abs(clientY - track.sy) > DRAG_THRESHOLD)
     track.moved = true
-  const p = norm(event)
+  const p = normXY(clientX, clientY)
   track.points.push({ x: p.x, y: p.y, t: Date.now() - track.start })
-})
+}
 
-frame.addEventListener("pointerup", event => {
-  if (!track) return
+/** 抬起：没超过阈值发点击，超过了把整条轨迹发过去 */
+function endTrack(source, clientX, clientY) {
+  if (!track || owner !== source) return
   const t = track
   track = null
-  const p = norm(event)
+  owner = ""
+  lastEndAt = Date.now()
+  const p = normXY(clientX, clientY)
   if (!t.moved) {
-    ripple(event)
+    rippleAt(clientX, clientY)
     act({ type: "click", x: p.x, y: p.y })
     return
   }
   t.points.push({ x: p.x, y: p.y, t: Date.now() - t.start })
   act({ type: "drag", points: t.points })
-})
+}
 
-frame.addEventListener("pointercancel", () => { track = null })
+/** 手势被系统打断（来电、切后台、手指被别的元素抢走） */
+function cancelTrack(source) {
+  if (owner && owner !== source) return
+  track = null
+  owner = ""
+}
+
+frame.addEventListener("pointerdown", event => {
+  // 只认主键（鼠标左键 / 手指 / 笔尖）：右键与侧键在远端没有对应动作
+  if (event.button > 0) return
+  if (!beginTrack("pointer", event.clientX, event.clientY)) return
+  // 捕获指针，这样手指滑出图片外抬起时 pointerup 仍然落在这里，轨迹不会断在半路
+  try {
+    frame.setPointerCapture?.(event.pointerId)
+  } catch {}
+})
+frame.addEventListener("pointermove", event => moveTrack("pointer", event.clientX, event.clientY))
+frame.addEventListener("pointerup", event => endTrack("pointer", event.clientX, event.clientY))
+frame.addEventListener("pointercancel", () => cancelTrack("pointer"))
+
+/*
+ * touch 分支自己 preventDefault：CSS 的 touch-action 在老内核上不一定认，
+ * 不拦掉页面就会跟着手指滚，拖不出滑块轨迹。
+ * pointer 链路正常时 owner 已被占，这里只剩 preventDefault 的作用。
+ */
+frame.addEventListener("touchstart", event => {
+  const t = event.touches[0]
+  if (!t) return
+  event.preventDefault()
+  beginTrack("touch", t.clientX, t.clientY)
+}, { passive: false })
+frame.addEventListener("touchmove", event => {
+  const t = event.touches[0]
+  if (!t) return
+  event.preventDefault()
+  moveTrack("touch", t.clientX, t.clientY)
+}, { passive: false })
+frame.addEventListener("touchend", event => {
+  // touchend 的 touches 已经空了，最后那一点在 changedTouches 里
+  const t = event.changedTouches[0]
+  event.preventDefault()
+  if (t) endTrack("touch", t.clientX, t.clientY)
+  else cancelTrack("touch")
+}, { passive: false })
+frame.addEventListener("touchcancel", () => cancelTrack("touch"))
+
+frame.addEventListener("mousedown", event => {
+  if (event.button > 0) return
+  beginTrack("mouse", event.clientX, event.clientY)
+})
+// 鼠标可能在图外抬起，所以 move/up 挂在 document 上，否则轨迹永远不结束
+document.addEventListener("mousemove", event => moveTrack("mouse", event.clientX, event.clientY))
+document.addEventListener("mouseup", event => endTrack("mouse", event.clientX, event.clientY))
+
 frame.addEventListener("contextmenu", event => event.preventDefault())
+frame.addEventListener("dragstart", event => event.preventDefault())
+
+/*
+ * 最后一层兜底：click。
+ *
+ * 三条链路一起挂之后仍有一种情况救不回来——内核派发了 down 却把 up 和 cancel 一起
+ * 吞掉，手势永远收不了尾，画面从此点不动。click 是所有内核都一定会派发的事件，
+ * 而它的时机正好能把这几种情况分辨开：
+ *
+ * - 正常内核：down → up → click。到这里时 owner 已空、lastEndAt 是刚才，说明这一次
+ *   已经由 endTrack 发出去了，跳过，否则同一次点击会发两遍。
+ * - up 被吞掉：down 开了轨迹却没人收尾，到这里时 owner 还占着 —— 由 click 顶上，
+ *   并把僵住的轨迹清掉，下一次点击不会再被它挡住。拖动没法这样补，但「点」不会瘫。
+ * - 连 down 都没派发：owner 空、lastEndAt 还是很久以前，照常发。
+ */
+frame.addEventListener("click", event => {
+  if (stopped) return
+  // 手势刚刚正常收尾过，这个 click 是浏览器补发的，丢掉
+  if (!owner && Date.now() - lastEndAt < 1000) return
+  track = null
+  owner = ""
+  lastEndAt = Date.now()
+  rippleAt(event.clientX, event.clientY)
+  const p = normXY(event.clientX, event.clientY)
+  act({ type: "click", x: p.x, y: p.y })
+})
 
 // 页面自身的滚动不动，滚轮只转发给远端页面（验证弹窗有时要往下滚一点）
 screenBox.addEventListener("wheel", event => {
   if (stopped) return
   event.preventDefault()
-  const p = norm(event)
+  const p = normXY(event.clientX, event.clientY)
   act({ type: "scroll", x: p.x, y: p.y, dy: event.deltaY })
 }, { passive: false })
 

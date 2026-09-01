@@ -18,6 +18,8 @@ import { store, parseCookieInput } from "../lib/store.js"
 import { audit } from "../lib/audit.js"
 import { isRunning } from "../lib/spark.js"
 import { startQrLogin, manualLogin, checkAccount } from "../lib/login.js"
+import { sendPrivate } from "../lib/bot.js"
+import { revokeTicket } from "../lib/remote.js"
 
 /** 下载来的 Cookie 文件落在这里，解析完立刻删掉（security.deleteCookieFile） */
 const tmpDir = ensureDir(dataDir, "tmp")
@@ -50,6 +52,8 @@ export class DouyinLogin extends plugin {
     try {
       await startQrLogin(e.self_id, {
         accountName: name,
+        // 抖音弹验证时远程操作链接只私信发给发起人，不能发在群里
+        userId: e.user_id,
         // 抖音的二维码约 60 秒换一张，换了就补发——QQ 里那张图不会自己更新，
         // 用户扫到作废的码会一直等不到结果
         onQrcode: async (base64, round) => {
@@ -66,9 +70,11 @@ export class DouyinLogin extends plugin {
           else if (status === "scanned") await e.reply("📱 已收到扫码，请在手机上点「确认登录」")
           // 确认之后 Cookie 还要等页面跳一趟才落盘，这一句避免用户以为又卡住了
           else if (status === "confirmed") await e.reply("🔑 已确认登录，正在取凭证，请稍等几秒…")
+          // verify 的正文由 onVerify 私信发，这里群里只留一句不含链接的提示
           else if (status === "verify") await e.reply(`⚠️ ${message}`)
           else if (["failed", "expired"].includes(status)) await e.reply(`❌ ${message}`)
         },
+        onVerify: link => sendVerifyLink(e, link),
       })
     } catch (error) {
       return e.reply(`扫码登录启动失败：${toError(error).message}`)
@@ -222,6 +228,48 @@ function targetLine(target) {
   if (target?.note) return `${target.name}（${target.note}）`
   if (target?.alias?.length) return `${target.name} / ${target.alias.join(" / ")}`
   return target?.name || ""
+}
+
+/**
+ * 把远程验证链接私信给发起人。
+ *
+ * 只私信，一个字都不进群：这条链接落在公网可达的地址上，谁点开谁就能操作那个
+ * 正在登录的浏览器。所以它和 `#抖音web` 的验证码一样——发不出去就当场作废，
+ * 留着只是多一个可被爆破的目标（同 apps/web.js 的 openWeb）。
+ */
+async function sendVerifyLink(e, link) {
+  const minutes = Math.max(1, Math.round((link.ttl || 600) / 60))
+  const msg = [
+    "🔓 抖音要求补充验证，已为你开一个远程操作页面\n\n",
+    `验证类型：${link.hint}\n`,
+    `链接：${link.url}\n`,
+    `有效期：${minutes} 分钟，仅本次登录可用\n\n`,
+    "用法：点开链接就能看到那个浏览器的实时画面，直接在图上点、拖、打字，\n",
+    "和你自己操作浏览器一样。验证过掉之后 Cookie 会自动保存，页面会提示成功。\n\n",
+    "⚠️ 请勿转发。链接绑定你打开时的 IP，页面里也进不了管理面板。\n",
+    "发送「#抖音web下线」可立即作废。",
+  ].join("")
+
+  try {
+    await sendPrivate(e.self_id, e.user_id, msg)
+    // 现场截图另发一条：跟链接挤在一条消息里，长文本容易把图挤到看不见。
+    // 读成 buffer 而不是传 file:// 路径——各适配器对本地路径的支持不一致，buffer 都认
+    if (link.shot) {
+      try {
+        await sendPrivate(e.self_id, e.user_id, [
+          "验证界面现场：",
+          segment.image(fs.readFileSync(link.shot)),
+        ])
+      } catch {}
+    }
+    // 群里那句提示由 onStatus 的 verify 分支发（它不含链接），这里不重复说一遍
+  } catch (error) {
+    revokeTicket(link.token)
+    await e.reply(
+      `❌ 私信发送验证链接失败（${toError(error).message}），已作废该链接。\n` +
+        "请先加机器人好友或允许临时会话，也可以改用「#抖音文件登录 账号名」导入 Cookie。"
+    )
+  }
 }
 
 /** 群内一律拒收 Cookie：带内容的先尝试撤回，再提示私聊 */

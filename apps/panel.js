@@ -9,6 +9,7 @@ import { config } from "../lib/config.js"
 import { toError } from "../lib/util.js"
 import { scheduler } from "../lib/scheduler.js"
 import { unbanAll, sessionList } from "../lib/auth.js"
+import { ticketStatus } from "../lib/remote.js"
 import { replyRender } from "../lib/render.js"
 import {
   buildStatusData,
@@ -161,13 +162,23 @@ export class DouyinPanel extends plugin {
           return e.reply(`已解封 ${unbanAll()} 个 IP`)
         case "会话": {
           const list = sessionList()
-          if (!list.length) return e.reply("当前没有活跃的面板会话")
-          return e.reply(
-            [
+          // 验证链接和面板会话一样是「现在还能用的入口」，一起列出来才看得全
+          const tickets = ticketStatus()
+          if (!list.length && !tickets.active) return e.reply("当前没有活跃的面板会话与验证链接")
+          const lines = []
+          if (list.length)
+            lines.push(
               "活跃面板会话：",
-              ...list.map(s => `· ${s.userId} → ${s.botId || "未选机器人"}｜${s.ip}｜到 ${s.expireAt}`),
-            ].join("\n")
-          )
+              ...list.map(s => `· ${s.userId} → ${s.botId || "未选机器人"}｜${s.ip}｜到 ${s.expireAt}`)
+            )
+          if (tickets.active)
+            lines.push(
+              `远程验证链接（${tickets.active} 个）：`,
+              ...tickets.items.map(
+                t => `· ${t.userId}｜${t.opened ? `已打开，操作 ${t.acts} 次` : "尚未打开"}｜到 ${t.expireAt}`
+              )
+            )
+          return e.reply(lines.join("\n"))
         }
         default:
           return e.reply(`未知设置项「${key}」，发送「#抖音设置」查看可用项`)

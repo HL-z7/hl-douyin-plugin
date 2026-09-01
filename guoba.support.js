@@ -543,6 +543,28 @@ export function supportGuoba() {
             "#抖音文件登录 收到的 txt 会先下载到 data/tmp 再解析。Cookie 明文不该留在磁盘上，建议保持开启",
           component: "Switch",
         },
+        {
+          field: "security.remoteVerify",
+          label: "抖音要验证时开远程操作页面",
+          bottomHelpMessage:
+            "扫码后抖音有时会追加身份验证（短信/滑块），无头浏览器里没人能点。开启后会私信给发起人一个临时链接，" +
+            "在里面看着那台浏览器的画面直接点/拖/打字把验证过掉。链接只能操作这一次登录，进不了本面板。关闭则退回「报失败 + 给替代方案」",
+          component: "Switch",
+        },
+        {
+          field: "security.verifyTimeout",
+          label: "验证等待上限(秒)",
+          bottomHelpMessage: "进入验证态后整体延到这个时长。人要收短信、点链接、在页面上操作，别调太短",
+          component: "InputNumber",
+          componentProps: { min: 120, max: 3600 },
+        },
+        {
+          field: "security.verifyBindIp",
+          label: "验证链接绑定 IP",
+          bottomHelpMessage:
+            "链接被转发到别的机器就失效，建议保持开启。手机在 4G 与 WiFi 之间切换会换 IP，真被它挡住时再关",
+          component: "Switch",
+        },
 
         { component: "Divider", label: "图片渲染" },
         {

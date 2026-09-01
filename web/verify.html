@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>抖音身份验证</title>
+<!--
+  远程验证页。刻意做成一个独立的单文件页面，而不是主面板的一个 tab：
+  这个页面拿到的是一张一次性票据，只能对某一个正在登录的浏览器「看一帧 / 点 / 拖 /
+  打字」。它管不了账号、配置、审计，也没有任何通往主面板的入口——链接落在公网
+  可达的地址上，页面上多一个入口就多一条被顺着摸进去的路。
+-->
+<style>
+:root{
+  --bg:#0f1116; --panel:#171a21; --panel2:#1e222b; --line:#282d38;
+  --text:#e6e8ee; --muted:#8b93a7; --brand:#fe2c55; --brand2:#25f4ee;
+  --ok:#3ddc97; --warn:#ffb454; --err:#ff5c5c;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+button{font:inherit;cursor:pointer;border:0;border-radius:8px;padding:8px 14px;
+  background:var(--panel2);color:var(--text);transition:.15s}
+button:hover{filter:brightness(1.25)}
+button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:linear-gradient(135deg,var(--brand),#ff6b81);color:#fff}
+button.sm{padding:5px 10px;font-size:13px}
+input{font:inherit;padding:9px 12px;border-radius:8px;border:1px solid var(--line);
+  background:#12151c;color:var(--text)}
+input:focus{outline:0;border-color:var(--brand)}
+.hide{display:none!important}
+.wrap{max-width:820px;margin:0 auto;padding:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
+.card+.card{margin-top:12px}
+.head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.logo{font-size:18px;font-weight:700;
+  background:linear-gradient(135deg,var(--brand),var(--brand2));
+  -webkit-background-clip:text;background-clip:text;color:transparent}
+.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;
+  background:var(--panel2);color:var(--muted)}
+.tag.ok{background:rgba(61,220,151,.15);color:var(--ok)}
+.tag.err{background:rgba(255,92,92,.15);color:var(--err)}
+.tag.warn{background:rgba(255,180,84,.15);color:var(--warn)}
+.tip{color:var(--muted);font-size:13px}
+.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.screen{position:relative;background:#000;border:1px solid var(--line);
+  border-radius:10px;overflow:hidden;min-height:180px}
+/* touch-action:none 是必须的：不关掉浏览器的滚动手势，手机上根本拖不出滑块轨迹 */
+.screen img{display:block;width:100%;touch-action:none;user-select:none;-webkit-user-drag:none}
+.screen .mask{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  background:rgba(15,17,22,.72);color:var(--muted);text-align:center;padding:20px}
+.dotmark{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;
+  border:2px solid var(--brand2);pointer-events:none;animation:pop .5s ease-out forwards}
+@keyframes pop{from{transform:scale(.4);opacity:1}to{transform:scale(1.8);opacity:0}}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;
+  background:var(--panel2);border:1px solid var(--line);border-radius:10px;
+  padding:10px 18px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <div class="head">
+      <span class="logo">抖音身份验证</span>
+      <span class="tag" id="state">连接中…</span>
+      <span class="tag" id="left"></span>
+    </div>
+    <p class="tip" id="hint">
+      下面是机器人那台浏览器的实时画面。直接在图上点、按住拖（滑块）、用输入框打字，
+      就跟你自己操作浏览器一样。验证过掉后 Cookie 会自动保存。
+    </p>
+    <div class="screen" id="screen">
+      <img id="frame" alt="">
+      <div class="mask" id="mask">正在连接…</div>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <input id="text" placeholder="要输入的内容（如短信验证码）" autocomplete="off"
+        style="flex:1;min-width:160px">
+      <button class="primary" id="btnType">输入</button>
+      <button class="sm" id="btnEnter">回车</button>
+      <button class="sm" id="btnBack">退格</button>
+      <button class="sm" id="btnRefresh">刷新画面</button>
+    </div>
+    <p class="tip" style="margin-top:10px">
+      输入前先点一下页面上的输入框，让光标落进去。画面每秒刷新一次，
+      点击后可能要等一两帧才看到变化。
+    </p>
+  </div>
+
+  <div class="card">
+    <p class="tip" style="margin:0">
+      这条链接只能操作这一次登录，管不了机器人的账号与配置，也进不了管理面板。
+      用完即失效，在 QQ 里发送 <span class="mono">#抖音web下线</span> 可立即作废。
+    </p>
+  </div>
+</div>
+<div class="toast hide" id="toast"></div>
+<script>
+/* ---------- 票据 ----------
+ * token 在 URL 的 hash 里：hash 不会发给服务端，因此不进 access log、不进 Referer。
+ * 读完立刻用 replaceState 抹掉，地址栏里也不留——截图、分享屏幕都不会连带泄露。
+ */
+const TOKEN = new URLSearchParams(location.hash.slice(1)).get("t") || ""
+if (location.hash) history.replaceState(null, "", location.pathname)
+
+const API = location.pathname.replace(/\/verify\/?$/, "") + "/api/verify"
+const $ = id => document.getElementById(id)
+const frame = $("frame"), mask = $("mask"), screenBox = $("screen")
+
+let stopped = false
+let expireAt = 0
+
+function toast(msg) {
+  const el = $("toast")
+  el.textContent = msg
+  el.classList.remove("hide")
+  clearTimeout(toast.t)
+  toast.t = setTimeout(() => el.classList.add("hide"), 2600)
+}
+
+function setState(text, kind) {
+  const el = $("state")
+  el.textContent = text
+  el.className = "tag" + (kind ? " " + kind : "")
+}
+
+function showMask(text) {
+  mask.textContent = text
+  mask.classList.remove("hide")
+}
+
+/* ---------- 请求 ----------
+ * token 走请求头而不是 query：query 会被写进 access log，而这个字符串就是整条
+ * 链接的全部权限。
+ */
+async function call(path, body) {
+  const res = await fetch(API + path, {
+    method: body ? "POST" : "GET",
+    headers: Object.assign({ "X-Verify-Token": TOKEN }, body ? { "Content-Type": "application/json" } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.error || ("HTTP " + res.status))
+  return data
+}
+
+/** 终态：会话已经收尾，画面不会再变，停掉轮询别再打接口 */
+function finish(text, kind) {
+  stopped = true
+  setState(text, kind)
+  $("left").textContent = ""
+  showMask(text)
+}
+
+/* ---------- 拉帧 ----------
+ * 每秒一张 jpeg。这里顺带读会话状态：成功/失败都在 status 里，
+ * 页面不用再问任何别的接口，也就不需要第二条鉴权路径。
+ */
+async function pull() {
+  if (stopped) return
+  try {
+    const data = await call("/frame")
+    expireAt = data.expireAt || expireAt
+
+    if (data.status === "success") return finish("✅ " + (data.message || "登录成功，Cookie 已保存") + "，可以关掉这个页面了", "ok")
+    if (["failed", "expired", "canceled", "closed"].includes(data.status))
+      return finish("⚠️ " + (data.message || "本次登录已结束"), "err")
+
+    if (data.image) {
+      frame.src = data.image
+      mask.classList.add("hide")
+      setState(data.status === "verify" ? "等你完成验证" : "已连接", data.status === "verify" ? "warn" : "ok")
+    } else {
+      showMask(data.error || "画面暂不可用，稍后重试")
+    }
+  } catch (error) {
+    // 401 = 票据失效（过期 / 换了 IP / 已被下线），继续轮询只会一直被计失败
+    if (/无效|过期/.test(error.message)) return finish("⚠️ " + error.message + "，请回 QQ 重新发送「#抖音登录」", "err")
+    showMask("连接失败：" + error.message)
+  }
+}
+
+/** 剩余时间只做展示，真正的过期判定在服务端 */
+function tickLeft() {
+  if (stopped || !expireAt) return
+  const sec = Math.max(0, Math.round((expireAt - Date.now()) / 1000))
+  $("left").textContent = "剩余 " + Math.floor(sec / 60) + " 分 " + String(sec % 60).padStart(2, "0") + " 秒"
+}
+
+/* ---------- 坐标 ----------
+ * 一律发 0~1 的相对值，服务端再乘真实视口尺寸。这张图会被 CSS 缩放（手机屏幕比
+ * 1280 窄得多），两边各自算缩放比就一定会对不齐，而点偏一点在「输入框」和
+ * 「换一张」之间就是天壤之别。归一化之后这边只需要一次除法。
+ */
+function norm(event) {
+  const rect = frame.getBoundingClientRect()
+  return {
+    x: Math.min(1, Math.max(0, (event.clientX - rect.left) / (rect.width || 1))),
+    y: Math.min(1, Math.max(0, (event.clientY - rect.top) / (rect.height || 1))),
+  }
+}
+
+/** 点在哪就在哪冒一个圈：截图要等下一帧才更新，没有这个反馈会让人以为没点上 */
+function ripple(event) {
+  const rect = screenBox.getBoundingClientRect()
+  const dot = document.createElement("div")
+  dot.className = "dotmark"
+  dot.style.left = event.clientX - rect.left + "px"
+  dot.style.top = event.clientY - rect.top + "px"
+  screenBox.appendChild(dot)
+  setTimeout(() => dot.remove(), 500)
+}
+
+async function act(body) {
+  if (stopped) return
+  try {
+    await call("/act", body)
+    // 操作完立刻补一帧，不必干等下一次轮询
+    pull()
+  } catch (error) {
+    toast("操作失败：" + error.message)
+  }
+}
+
+/* ---------- 点击与拖动 ----------
+ * 同一套 pointer 事件同时覆盖鼠标和手指：按下到抬起之间移动超过阈值就当拖动，
+ * 否则当点击。拖动把整条轨迹连时间戳一起发过去——滑块验证判的就是这条曲线，
+ * 用代码生成的匀速直线基本过不去，而这里原样重放的是真实人手轨迹。
+ */
+const DRAG_THRESHOLD = 6
+let track = null
+
+frame.addEventListener("pointerdown", event => {
+  if (stopped) return
+  event.preventDefault()
+  frame.setPointerCapture?.(event.pointerId)
+  track = { start: Date.now(), sx: event.clientX, sy: event.clientY, moved: false, points: [] }
+  const p = norm(event)
+  track.points.push({ x: p.x, y: p.y, t: 0 })
+})
+
+frame.addEventListener("pointermove", event => {
+  if (!track) return
+  if (Math.abs(event.clientX - track.sx) > DRAG_THRESHOLD || Math.abs(event.clientY - track.sy) > DRAG_THRESHOLD)
+    track.moved = true
+  const p = norm(event)
+  track.points.push({ x: p.x, y: p.y, t: Date.now() - track.start })
+})
+
+frame.addEventListener("pointerup", event => {
+  if (!track) return
+  const t = track
+  track = null
+  const p = norm(event)
+  if (!t.moved) {
+    ripple(event)
+    act({ type: "click", x: p.x, y: p.y })
+    return
+  }
+  t.points.push({ x: p.x, y: p.y, t: Date.now() - t.start })
+  act({ type: "drag", points: t.points })
+})
+
+frame.addEventListener("pointercancel", () => { track = null })
+frame.addEventListener("contextmenu", event => event.preventDefault())
+
+// 页面自身的滚动不动，滚轮只转发给远端页面（验证弹窗有时要往下滚一点）
+screenBox.addEventListener("wheel", event => {
+  if (stopped) return
+  event.preventDefault()
+  const p = norm(event)
+  act({ type: "scroll", x: p.x, y: p.y, dy: event.deltaY })
+}, { passive: false })
+
+/* ---------- 键盘 ---------- */
+$("btnType").onclick = () => {
+  const text = $("text").value.trim()
+  if (!text) return toast("先填要输入的内容")
+  act({ type: "type", text })
+  // 输完清空：这一栏里多半是短信验证码，没必要留在屏幕上
+  $("text").value = ""
+}
+$("text").addEventListener("keydown", event => {
+  if (event.key === "Enter") $("btnType").click()
+})
+$("btnEnter").onclick = () => act({ type: "key", key: "Enter" })
+$("btnBack").onclick = () => act({ type: "key", key: "Backspace" })
+$("btnRefresh").onclick = () => pull()
+
+/* ---------- 启动 ---------- */
+if (!TOKEN) {
+  finish("⚠️ 链接不完整，请从 QQ 私信里重新点开", "err")
+} else {
+  pull()
+  setInterval(pull, 1000)
+  setInterval(tickLeft, 1000)
+  // 切回前台立刻补一帧，别让人看着一张几分钟前的旧画面
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) pull()
+  })
+}
+</script>
+</body>
+</html>

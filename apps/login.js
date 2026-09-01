@@ -80,10 +80,11 @@ export class DouyinLogin extends plugin {
       return e.reply(`扫码登录启动失败：${toError(error).message}`)
     }
 
-    // 出码要真开浏览器加载抖音首页，实测 20 秒上下，25 秒还没动静才提示一声
+    // 出码要真开浏览器加载抖音首页，慢机器上实测能到 45 秒以上（passport 的 JS 要和
+    // 首页推荐流抢主线程），所以这句只是安抚，不代表已经失败
     setTimeout(() => {
       if (!replied)
-        e.reply("二维码仍在获取中，若长时间无响应可改用「#抖音文件登录 账号名」").catch(() => {})
+        e.reply("二维码仍在获取中（慢机器上出码可能要一分钟），若最终报错可改用「#抖音文件登录 账号名」").catch(() => {})
     }, 25000)
   }
 

@@ -118,6 +118,31 @@ export class DouyinPanel extends plugin {
           config.set("render.image", on)
           return e.reply(`文本渲染成图已${on ? "开启" : "关闭"}${on ? "" : "，之后帮助/设置/状态都发纯文字"}`)
         }
+        case "调试":
+        case "调试日志": {
+          if (!on && !off) return e.reply("格式：#抖音设置 调试 开/关")
+          config.set("debug.enable", on)
+          return e.reply(
+            on
+              ? "调试日志已开启：扫码登录与续火的每一步都会在 Yunzai 日志里记一行（带 [调试] 前缀），" +
+                "Cookie 的值不会进日志。查完记得关掉，它会让日志量成倍增长"
+              : "调试日志已关闭"
+          )
+        }
+        case "快照":
+        case "现场快照": {
+          if (!on && !off) return e.reply("格式：#抖音设置 快照 开/关")
+          config.set("debug.snapshot", on)
+          // 快照本身受调试总开关约束（见 lib/debug.js 的 snapshotOn），只开这个不会有文件产出
+          if (on && !config.bool("debug.enable", false))
+            return e.reply("现场快照已开启，但「调试日志」还是关的，快照不会产出。请再发一次「#抖音设置 调试 开」")
+          return e.reply(
+            on
+              ? "现场快照已开启：关键步骤会把整页截图、页面纯文本与完整 HTML 存到 data/debug/，" +
+                "单页 HTML 常有一兆多，按「快照保留文件数」滚动清理"
+              : "现场快照已关闭"
+          )
+        }
         case "加群": {
           const groupId = value || String(e.group_id || "")
           if (!groupId) return e.reply("请在群内使用，或指定群号：#抖音设置 加群 群号")

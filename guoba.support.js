@@ -595,6 +595,32 @@ export function supportGuoba() {
           component: "InputNumber",
           componentProps: { min: 1, max: 100 },
         },
+
+        { component: "Divider", label: "排查（默认全关）" },
+        {
+          field: "debug.enable",
+          label: "调试日志",
+          bottomHelpMessage:
+            "打开后扫码登录与续火的每一步都在 Yunzai 日志里记一行（带 [调试] 前缀）：页面打开结果、等的元素出没出现、" +
+            "拦到的接口与状态码、每轮验证探测的结论、状态流转。登录/续火卡住时先开它再跑一次就知道停在哪一步了。" +
+            "Cookie 的值不会进日志。平时关掉——它会让日志量成倍增长",
+          component: "Switch",
+        },
+        {
+          field: "debug.snapshot",
+          label: "现场快照（截图 + 页面原文）",
+          bottomHelpMessage:
+            "需要先打开上面的「调试日志」。关键步骤把整页截图、页面纯文本、完整 HTML 存到 data/debug/，" +
+            "抖音改版导致选择器失效时唯一有用的东西。单页 HTML 常有一兆多，按下面的上限滚动清理",
+          component: "Switch",
+        },
+        {
+          field: "debug.keep",
+          label: "快照保留文件数",
+          bottomHelpMessage: "data/debug/ 里最多留多少个文件，超出按时间删最旧的。0 = 不清理（会一直涨）",
+          component: "InputNumber",
+          componentProps: { min: 0, max: 5000 },
+        },
       ],
 
       /** 锅巴打开面板时读：直接给当前生效的配置（默认值已合并过） */

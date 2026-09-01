@@ -118,6 +118,29 @@ export class DouyinPanel extends plugin {
           config.set("render.image", on)
           return e.reply(`文本渲染成图已${on ? "开启" : "关闭"}${on ? "" : "，之后帮助/设置/状态都发纯文字"}`)
         }
+        case "打码":
+        case "链接打码": {
+          if (!on && !off) return e.reply("格式：#抖音设置 打码 开/关")
+          config.set("web.maskLinkInGroup", on)
+          return e.reply(
+            on
+              ? "已开启：群里回复面板地址时只显示打码后的主机（完整地址仍私信发送）。" +
+                "用公网 IP 直连的建议保持开启，群里贴一次原样地址等于把机器交给全部群成员扫端口"
+              : "已关闭：群里会直接显示完整面板地址。请确认你用的是域名而不是公网 IP"
+          )
+        }
+        case "自动短信":
+        case "短信验证": {
+          if (!on && !off) return e.reply("格式：#抖音设置 自动短信 开/关")
+          config.set("security.autoSms", on)
+          return e.reply(
+            on
+              ? "已开启：抖音要求短信验证时，插件自己点「接收短信验证码 → 发送验证码」，" +
+                "再私信跟你要那几位数字，填回页面后自动登录。注意它会真往你绑定的手机发短信。" +
+                "只想用一次的话不必开这个，直接发「#抖音自动登录」"
+              : "已关闭：「#抖音登录」遇到短信验证会走远程操作页面。「#抖音自动登录」不受这个开关影响，仍然自动接管"
+          )
+        }
         case "调试":
         case "调试日志": {
           if (!on && !off) return e.reply("格式：#抖音设置 调试 开/关")

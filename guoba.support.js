@@ -525,6 +525,14 @@ export function supportGuoba() {
           component: "InputNumber",
           componentProps: { min: 50, max: 10000 },
         },
+        {
+          field: "web.maskLinkInGroup",
+          label: "群内回复链接打码",
+          bottomHelpMessage:
+            "开启后群里那条回复只显示 http://***.45:2536/douyin/ 这样的打码地址（完整地址私信已发）。" +
+            "公网 IP 直连的强烈建议保持开启：群里贴一次原样地址等于把机器交给全部群成员扫端口。用域名 + HTTPS 的可以关掉",
+          component: "Switch",
+        },
 
         { component: "Divider", label: "安全" },
         {
@@ -558,6 +566,15 @@ export function supportGuoba() {
           bottomHelpMessage:
             "扫码后抖音有时会追加身份验证（短信/滑块），无头浏览器里没人能点。开启后会私信给发起人一个临时链接，" +
             "在里面看着那台浏览器的画面直接点/拖/打字把验证过掉。链接只能操作这一次登录，进不了本面板。关闭则退回「报失败 + 给替代方案」",
+          component: "Switch",
+        },
+        {
+          field: "security.autoSms",
+          label: "自己接管短信验证",
+          bottomHelpMessage:
+            "抖音要求短信验证时，由插件自己在页面上点「接收短信验证码 → 发送验证码」，再私信跟你要那几位数字，收到后自动填回提交，不用点开任何链接。" +
+            "默认关：它会真往你绑定的手机发一条短信。只想临时用一次的话直接发「#抖音自动登录」（那条指令不看这个开关）；这里打开则「#抖音登录」也一并走这条路。" +
+            "只对短信验证有效，滑块/拼图仍走上面的远程操作页面",
           component: "Switch",
         },
         {

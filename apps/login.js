@@ -1,8 +1,11 @@
 /**
  * 抖音账号登录与凭证维护指令。
  *
- * 三条登录路径，覆盖不同场景：
+ * 四条登录路径，覆盖不同场景：
  * - 扫码：`#抖音登录`，浏览器自动抓 Cookie，最省事
+ * - 自动：`#抖音自动登录`，扫码之外再接管短信验证——抖音弹「身份验证」时插件自己
+ *         点「接收短信验证码 → 发送验证码」，只跟你要那几位数字。异地登录、账号有
+ *         风控标记的号常年卡在这一步，这条路不用点开任何链接
  * - 粘贴：`#抖音手动登录 账号名 Cookie`，短 Cookie 直接贴
  * - 文件：`#抖音文件登录 账号名` + 发一个 txt，QQ 输入框对超长文本会截断，
  *         抖音的完整 Cookie 常常超过限制，贴进去就是残缺的——用文件传才可靠
@@ -17,7 +20,7 @@ import { toError, ensureDir, dataDir, safeFileName, log } from "../lib/util.js"
 import { store, parseCookieInput } from "../lib/store.js"
 import { audit } from "../lib/audit.js"
 import { isRunning } from "../lib/spark.js"
-import { startQrLogin, manualLogin, checkAccount } from "../lib/login.js"
+import { startQrLogin, manualLogin, checkAccount, submitSmsCode } from "../lib/login.js"
 import { sendPrivate } from "../lib/bot.js"
 import { revokeTicket } from "../lib/remote.js"
 
@@ -34,6 +37,9 @@ export class DouyinLogin extends plugin {
       rule: [
         { reg: "^#?(dy|抖音)(文件|txt|TXT)登录", fnc: "fileLogin", permission: "master" },
         { reg: "^#?(dy|抖音)手动登录", fnc: "manualLogin", permission: "master" },
+        // 必须排在扫码登录前面：`^#?(dy|抖音)(扫码)?登录` 不是全字匹配，
+        // 「抖音自动登录」里的「登录」会被它先吃掉
+        { reg: "^#?(dy|抖音)自动登录", fnc: "autoLogin", permission: "master" },
         { reg: "^#?(dy|抖音)(扫码)?登录", fnc: "qrLogin", permission: "master" },
         { reg: "^#?(dy|抖音)(检查|验证)(cookie|CK|ck)?$", fnc: "checkCookies", permission: "master" },
         { reg: "^#?(dy|抖音)账号(列表)?$", fnc: "listAccounts", permission: "master" },
@@ -43,8 +49,27 @@ export class DouyinLogin extends plugin {
   }
 
   /** 扫码登录：二维码用图片发回，状态变化再补一条 */
-  async qrLogin(e) {
-    const name = e.msg.replace(/^#?(dy|抖音)(扫码)?登录\s*/, "").trim()
+  qrLogin(e) {
+    return this.startLogin(e, e.msg.replace(/^#?(dy|抖音)(扫码)?登录\s*/, "").trim())
+  }
+
+  /**
+   * 自动登录 = 扫码登录 + 插件自己接管短信验证。
+   *
+   * 与 `#抖音登录` 只差一个 autoSms 标志，所以走同一个 startLogin，不另写一套流程。
+   * 注意它会真的往你绑定的手机发一条短信（只在抖音主动要求验证时才发）。
+   */
+  autoLogin(e) {
+    return this.startLogin(e, e.msg.replace(/^#?(dy|抖音)自动登录\s*/, "").trim(), true)
+  }
+
+  /**
+   * 扫码登录的公共主体。
+   *
+   * @param {string} name 账号名，留空则登录成功后读抖音昵称
+   * @param {boolean} [autoSms] 是否接管短信验证。undefined 时跟 security.autoSms
+   */
+  async startLogin(e, name, autoSms) {
     const waitSec = config.num("security.qrLoginTimeout", 180, { min: 30, max: 600 })
     await e.reply("正在启动浏览器获取抖音二维码，请稍候…")
 
@@ -54,6 +79,7 @@ export class DouyinLogin extends plugin {
         accountName: name,
         // 抖音弹验证时远程操作链接只私信发给发起人，不能发在群里
         userId: e.user_id,
+        autoSms,
         // 抖音的二维码约 60 秒换一张，换了就补发——QQ 里那张图不会自己更新，
         // 用户扫到作废的码会一直等不到结果
         onQrcode: async (base64, round) => {
@@ -72,8 +98,12 @@ export class DouyinLogin extends plugin {
           else if (status === "confirmed") await e.reply("🔑 已确认登录，正在取凭证，请稍等几秒…")
           // verify 的正文由 onVerify 私信发，这里群里只留一句不含链接的提示
           else if (status === "verify") await e.reply(`⚠️ ${message}`)
+          // sms 的正文由 onSmsRequest 发（它还要顺手挂上下文），这里不重复说一遍
           else if (["failed", "expired"].includes(status)) await e.reply(`❌ ${message}`)
         },
+        // 箭头函数：setContext/finish 是 plugin 实例方法，而这个回调是在 lib/login.js
+        // 内部触发的，必须闭包住这里的 this
+        onSmsRequest: info => this.askSmsCode(e, info),
         onVerify: link => sendVerifyLink(e, link),
       })
     } catch (error) {
@@ -86,6 +116,59 @@ export class DouyinLogin extends plugin {
       if (!replied)
         e.reply("二维码仍在获取中（慢机器上出码可能要一分钟），若最终报错可改用「#抖音文件登录 账号名」").catch(() => {})
     }, 25000)
+  }
+
+  /**
+   * 短信已经发出去了，挂上下文等用户把验证码发回来。
+   *
+   * 上下文一律按私聊键（isGroup=false → conKey 用 user_id），所以用户在群里回、
+   * 私聊回都能对上同一个会话；而 loader 的 context hook 优先于 rule 匹配
+   * （lib/plugins/loader.js:205），那条纯数字消息不会被别的插件抢走。
+   *
+   * 提示优先私信：验证码本身用完即废，但没必要让整个群看见「某人正在登录哪个号」。
+   * 私信发不出去（没加好友、临时会话被拒）就退回当前会话，总比让人干等超时好。
+   */
+  async askSmsCode(e, { sessionId, phone, ttl }) {
+    // 上下文超时比会话期限早 10 秒收尾：先由这里回一句「已超时」，
+    // 免得用户刚看到「超时已取消」又收到会话那边的 expired 提示，看着像出了两次错
+    const wait = Math.max(60, Number(ttl || 600) - 10)
+    this.setContext("receiveSmsCode", false, wait, "等待验证码超时，本次自动登录已取消")
+    this.e.dySessionId = sessionId
+
+    const msg = [
+      "📨 抖音要求短信验证，我已经替你点了「发送验证码」",
+      `验证码已发到${phone ? ` ${phone}` : "你绑定的手机"}，请把收到的验证码发给我（直接发数字即可），我填进页面提交。`,
+      `${Math.max(1, Math.round(wait / 60))} 分钟内有效，发送「取消」可中止。`,
+    ].join("\n")
+
+    try {
+      await sendPrivate(e.self_id, e.user_id, msg)
+      if (e.isGroup) await e.reply("⚠️ 抖音要求短信验证，验证码怎么发已私信告诉你了", true)
+    } catch {
+      await e.reply(msg, true)
+    }
+  }
+
+  /** 上下文回调：这条消息要么是验证码，要么是取消 */
+  async receiveSmsCode() {
+    const e = this.e
+    const text = String(e.msg || "").trim()
+    const sessionId = String(this.getContext("receiveSmsCode")?.dySessionId || "")
+
+    if (/^(取消|cancel|退出)$/i.test(text)) {
+      this.finish("receiveSmsCode")
+      // 会话本身留给超时兜底收尾：这里强行取消会连带关掉浏览器页面，
+      // 而用户可能只是想换个方式（比如自己去点远程验证页面）
+      return e.reply("已取消填写验证码，本次登录会在超时后自动结束")
+    }
+    // 不像验证码的消息就继续等：随便说句话不该把上下文丢掉，
+    // 但也不能吞掉——原样提示一句，用户才知道机器人还在等
+    if (!/^\D{0,6}\d{4,8}\D{0,6}$/.test(text)) return e.reply("请把短信里的验证码发给我（4~8 位数字），或发送「取消」中止")
+
+    const r = await submitSmsCode(sessionId, text)
+    // 还能重试就留着上下文，让用户直接再发一次；否则收尾
+    if (!r.retry) this.finish("receiveSmsCode")
+    return e.reply(`${r.ok ? "✅" : "❌"} ${r.message}`)
   }
 
   /** 手动登录：群里出现 Cookie 属于泄露，直接拒收并提示撤回 */

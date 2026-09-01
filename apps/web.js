@@ -6,7 +6,7 @@
  * 进面板后只能选这些机器人，改参数越权不了（校验在 lib/auth.js 的 selectBot）。
  */
 import { config } from "../lib/config.js"
-import { toError } from "../lib/util.js"
+import { toError, maskUrl } from "../lib/util.js"
 import { audit } from "../lib/audit.js"
 import { issueCode, revokeCodes, destroyUserSessions } from "../lib/auth.js"
 import { revokeUserTickets } from "../lib/remote.js"
@@ -57,8 +57,17 @@ export class DouyinWeb extends plugin {
     }
 
     audit.add("web.open", { botId: e.self_id, userId: e.user_id, group: e.group_id || "" })
-    const reply = [`🔗 抖音续火面板：${url}`, `验证码已私信发送，${Math.floor(ttl / 60)} 分钟内有效`]
-    if (e.isGroup) reply.push("（验证码不会出现在群里）")
+
+    /*
+     * 群里那条回复默认给主机名打码（web.maskLinkInGroup）。
+     *
+     * 完整地址已经在上面的私信里了，群里这句真正的作用只是「指令收到了」；
+     * 而用公网 IP 直连的人一旦在群里贴出原样地址，等于把机器交给全部群成员去扫端口。
+     * 用域名 + HTTPS 的人把开关关掉就能继续看到完整链接。
+     */
+    const masked = e.isGroup && config.bool("web.maskLinkInGroup", true)
+    const reply = [`🔗 抖音续火面板：${masked ? maskUrl(url) : url}`, `验证码已私信发送，${Math.floor(ttl / 60)} 分钟内有效`]
+    if (e.isGroup) reply.push(masked ? "（完整地址与验证码均已私信发送）" : "（验证码不会出现在群里）")
     return e.reply(reply.join("\n"), true)
   }
 

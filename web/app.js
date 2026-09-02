@@ -34,6 +34,24 @@ function esc(text) {
   return String(text ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]))
 }
 
+/**
+ * 时间戳 → 「今天 14:05」/「昨天 22:31」/「9-1 08:12」。
+ * 缓存最长几小时，配「几点拉的」这种用途；绝对日期只在跨天时才出现。
+ */
+function clockText(ts) {
+  const t = Number(ts)
+  if (!t) return "未知时间"
+  const d = new Date(t)
+  const p = n => String(n).padStart(2, "0")
+  const hm = `${p(d.getHours())}:${p(d.getMinutes())}`
+  const day = new Date()
+  const same = (a, b) => a.toDateString() === b.toDateString()
+  if (same(d, day)) return `今天 ${hm}`
+  day.setDate(day.getDate() - 1)
+  if (same(d, day)) return `昨天 ${hm}`
+  return `${d.getMonth() + 1}-${d.getDate()} ${hm}`
+}
+
 /* ---------- 续火目标 ----------
  * 后端存的是 { name, alias[], note }（lib/store.js），旧字段 targetNames 只有主名。
  * 这里保留两套转换：展示用 targetLabel，编辑用 targetLine（可被 normalizeTargets 原样解析回来）。
@@ -310,24 +328,46 @@ $("btnSend").onclick = async () => {
   }
 }
 
-$("btnLoadFriends").onclick = async () => {
+/**
+ * 拉会话列表。后端默认吃缓存（`spark.friendsCacheTTL`），`refresh` 才真开浏览器。
+ * 命中缓存时要把「这是几点拉的」说出来——用户看到旧名单会以为接口坏了。
+ */
+async function loadFriends(refresh) {
   const id = $("sendAcc").value
   if (!id) return toast("请选择账号")
-  $("sendHint").textContent = "正在拉取会话列表…"
+  const btn = refresh ? $("btnReloadFriends") : $("btnLoadFriends")
+  btn.disabled = true
+  $("sendHint").textContent = refresh ? "正在重新打开抖音拉取…" : "正在拉取会话列表…"
   try {
-    const { friends } = await api(`/accounts/${id}/friends`)
+    const { friends, cached, at } = await api(`/accounts/${id}/friends${refresh ? "?refresh=1" : ""}`)
     $("friendPick").innerHTML = friends.length
       ? friends.map(n => `<button class="sm ghost" data-n="${esc(n)}">${esc(n)}</button>`).join("")
       : '<span class="tip">没有拉到会话，可能需要先在抖音里打开过聊天</span>'
-    for (const btn of $("friendPick").querySelectorAll("button"))
-      btn.onclick = () => {
+    for (const b of $("friendPick").querySelectorAll("button"))
+      b.onclick = () => {
         const cur = $("sendFriends").value.trim()
-        $("sendFriends").value = cur ? `${cur},${btn.dataset.n}` : btn.dataset.n
+        $("sendFriends").value = cur ? `${cur},${b.dataset.n}` : b.dataset.n
       }
-    $("sendHint").textContent = `拉到 ${friends.length} 个会话，点击可加入收件人`
+    // 拉过一次才显示「重新拉取」：没名单时那个按钮没有意义
+    $("btnReloadFriends").classList.toggle("hide", !friends.length)
+    $("sendHint").textContent = cached
+      ? `${friends.length} 个会话（${clockText(at)} 的缓存），点击可加入收件人；名单不对就点「重新拉取」`
+      : `拉到 ${friends.length} 个会话，点击可加入收件人`
   } catch (error) {
     $("sendHint").textContent = error.message
+  } finally {
+    btn.disabled = false
   }
+}
+
+$("btnLoadFriends").onclick = () => loadFriends(false)
+$("btnReloadFriends").onclick = () => loadFriends(true)
+
+// 换账号后原来那份名单属于上一个号，留着只会让人往错的收件人上点
+$("sendAcc").onchange = () => {
+  $("friendPick").innerHTML = ""
+  $("btnReloadFriends").classList.add("hide")
+  $("sendHint").textContent = ""
 }
 /* ---------- 抖音登录 ---------- */
 $("btnQr").onclick = async () => {

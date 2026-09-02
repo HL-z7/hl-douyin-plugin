@@ -40,12 +40,26 @@ export class DouyinWeb extends plugin {
     const { code, ttl } = issueCode({ userId: e.user_id, botId: e.self_id, allowedBots })
     const url = `${config.webOrigin()}${config.webBase()}/`
 
+    /*
+     * 一键进入链接：验证码放 URL 的 hash 而不是 query。
+     *
+     * 想要的效果是「点一下就进面板」，不用在两条消息之间来回复制那 6 位码。但 `?ABCD`
+     * 这种写法会把码交给服务端：Yunzai 的 serverHandle 会把 req.query 整个打进日志
+     * （lib/bot.js），而排查问题时大家习惯直接把 logs/command.*.log 贴出来 —— 那等于
+     * 把还没过期的验证码贴到公开的地方。hash 压根不发给服务端，因此不进 access log、
+     * 不随 Referer 外泄，前端读完立刻 replaceState 抹掉，地址栏与截图里也不留。
+     *
+     * 这条路已经被验证可行：远程验证链接（/verify#t=xxx）用的就是同一套，QQ 能正常
+     * 识别带 hash 的链接。
+     */
+    const link = `${url}#${code}`
+
     try {
       await sendPrivate(e.self_id, e.user_id, [
-        "🔐 抖音续火面板临时验证码\n",
-        `验证码：${code}\n`,
+        "🔐 抖音续火面板\n",
+        `一键进入：${link}\n`,
+        `手动输入：地址 ${url} ，验证码 ${code}\n`,
         `有效期：${Math.floor(ttl / 60)} 分钟，仅可使用一次\n`,
-        `地址：${url}\n`,
         "⚠️ 请勿转发。若非本人操作，发送「#抖音web下线」立即作废。",
       ].join(""))
     } catch (error) {
@@ -66,7 +80,7 @@ export class DouyinWeb extends plugin {
      * 用域名 + HTTPS 的人把开关关掉就能继续看到完整链接。
      */
     const masked = e.isGroup && config.bool("web.maskLinkInGroup", true)
-    const reply = [`🔗 抖音续火面板：${masked ? maskUrl(url) : url}`, `验证码已私信发送，${Math.floor(ttl / 60)} 分钟内有效`]
+    const reply = [`🔗 抖音续火面板：${masked ? maskUrl(url) : url}`, `一键进入链接已私信发送，${Math.floor(ttl / 60)} 分钟内有效`]
     if (e.isGroup) reply.push(masked ? "（完整地址与验证码均已私信发送）" : "（验证码不会出现在群里）")
     return e.reply(reply.join("\n"), true)
   }

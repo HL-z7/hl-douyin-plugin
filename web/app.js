@@ -77,10 +77,35 @@ function targetLine(target) {
 }
 
 /* ---------- 鉴权 ---------- */
+
+/**
+ * 从 URL 的 hash 里取一键进入的验证码，取完立刻抹掉。
+ *
+ * 为什么是 hash 而不是 query：hash 不发给服务端，因此不进 access log、不随 Referer
+ * 外泄（Yunzai 的 serverHandle 会把 req.query 整个打进日志，而日志经常被直接贴出来
+ * 排查问题）。读完 replaceState 是为了让地址栏、书签、截图里都不留这 6 位码。
+ * 与远程验证页面（/verify#t=xxx）同一套做法。
+ */
+function takeHashCode() {
+  const raw = decodeURIComponent(location.hash.slice(1)).trim().toUpperCase()
+  if (location.hash) history.replaceState(null, "", location.pathname + location.search)
+  // 验证码字符集见 lib/crypto.js 的 randomCode：去掉了易混的 0O1IL
+  return /^[A-Z0-9]{4,8}$/.test(raw) ? raw : ""
+}
+
 async function boot() {
+  const hashCode = takeHashCode()
+  /** 未登录时的落点：带了码就直接验，用户点链接的预期是「点一下就进去」而不是再按一次按钮 */
+  const toLogin = () => {
+    show("viewLogin")
+    if (!hashCode) return
+    $("code").value = hashCode
+    $("btnVerify").click()
+  }
+
   try {
     const st = await api("/auth/state")
-    if (!st.authed) return show("viewLogin")
+    if (!st.authed) return toLogin()
     state.bots = st.bots || []
     if (st.botId) {
       state.botId = st.botId
@@ -90,7 +115,7 @@ async function boot() {
       show("viewBots")
     }
   } catch {
-    show("viewLogin")
+    toLogin()
   }
 }
 

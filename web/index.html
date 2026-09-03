@@ -5,79 +5,30 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>抖音续火控制台</title>
-<style>
-:root{
-  --bg:#0f1116; --panel:#171a21; --panel2:#1e222b; --line:#282d38;
-  --text:#e6e8ee; --muted:#8b93a7; --brand:#fe2c55; --brand2:#25f4ee;
-  --ok:#3ddc97; --warn:#ffb454; --err:#ff5c5c;
-}
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);
-  font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-a{color:var(--brand2);text-decoration:none}
-button{font:inherit;cursor:pointer;border:0;border-radius:8px;padding:8px 14px;
-  background:var(--panel2);color:var(--text);transition:.15s}
-button:hover{filter:brightness(1.25)}
-button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:linear-gradient(135deg,var(--brand),#ff6b81);color:#fff}
-button.ghost{background:transparent;border:1px solid var(--line)}
-button.danger{background:transparent;border:1px solid var(--err);color:var(--err)}
-button.sm{padding:5px 10px;font-size:13px}
-input,textarea,select{font:inherit;width:100%;padding:9px 12px;border-radius:8px;
-  border:1px solid var(--line);background:#12151c;color:var(--text)}
-input:focus,textarea:focus,select:focus{outline:0;border-color:var(--brand)}
-textarea{min-height:90px;resize:vertical}
-label{display:block;margin:10px 0 4px;color:var(--muted);font-size:13px}
-.hide{display:none!important}
-.wrap{max-width:1080px;margin:0 auto;padding:20px}
-.center{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:20px}
-.card+.card{margin-top:16px}
-.card h3{margin:0 0 12px;font-size:15px;display:flex;align-items:center;gap:8px}
-.card h3 .sp{margin-left:auto;font-weight:400;font-size:13px;color:var(--muted)}
-.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
-.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fit,minmax(220px,1fr))}
-.logo{font-size:22px;font-weight:700;text-align:center;
-  background:linear-gradient(135deg,var(--brand),var(--brand2));
-  -webkit-background-clip:text;background-clip:text;color:transparent}
-.tip{color:var(--muted);font-size:13px}
-.err{color:var(--err);font-size:13px;min-height:20px}
-.tabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
-.tabs button.on{background:var(--brand);color:#fff}
-.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;
-  background:var(--panel2);color:var(--muted)}
-.tag.ok{background:rgba(61,220,151,.15);color:var(--ok)}
-.tag.err{background:rgba(255,92,92,.15);color:var(--err)}
-.tag.warn{background:rgba(255,180,84,.15);color:var(--warn)}
-table{width:100%;border-collapse:collapse}
-th,td{padding:9px 8px;text-align:left;border-bottom:1px solid var(--line);font-size:13px}
-th{color:var(--muted);font-weight:500}
-.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
-.qr{width:200px;height:200px;background:#fff;border-radius:10px;padding:6px}
-.bot{display:flex;align-items:center;gap:12px;padding:12px;border-radius:10px;
-  border:1px solid var(--line);background:var(--panel2);cursor:pointer}
-.bot:hover{border-color:var(--brand)}
-.bot .n{font-weight:600}
-.dot{width:8px;height:8px;border-radius:50%;background:var(--err)}
-.dot.on{background:var(--ok)}
-.toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);z-index:99;
-  background:var(--panel2);border:1px solid var(--line);border-radius:10px;
-  padding:10px 18px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
-.log{max-height:340px;overflow:auto}
-</style>
+<!--
+  单页应用：四个 <section>（登录 / 选机器人 / 控制台 / 私信）靠 .hide 切换。刻意不做
+  前端路由——lib/web.js 的 SPA 兜底把非 /api/ 且无扩展名的路径都指回这个文件，加了
+  路由也只会在刷新后落回同一处。样式全在 web/style.css，与 verify.html 共用一份。
+  留下的 style="" 都是「一处专用、搬进 css 反而多个只用一次的类名」的那种。
+-->
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
+
 <!-- ① 验证码登录 -->
 <section id="viewLogin" class="center">
-  <div class="card" style="width:360px">
-    <div class="logo">抖音续火控制台</div>
-    <p class="tip" style="text-align:center;margin:10px 0 18px">
-      请输入机器人私信发给你的临时验证码<br>
-      （私信里那条链接点开即进，不用手输）
-    </p>
+  <div class="card" style="width:min(370px,100%)">
+    <div style="text-align:center">
+      <div class="logo" style="margin:0 auto 12px">🔥</div>
+      <div class="hero-kicker">HL DOUYIN PLUGIN</div>
+      <div class="hero-title" style="font-size:20px">抖音续火控制台</div>
+      <p class="tip" style="margin:10px 0 18px">
+        输入机器人私信发来的临时验证码<br>私信里那条链接点开即进，不用手输
+      </p>
+    </div>
     <input id="code" maxlength="6" autocomplete="off" placeholder="6 位验证码"
       style="text-align:center;letter-spacing:6px;font-size:22px;text-transform:uppercase">
-    <div class="err" id="loginErr"></div>
+    <div class="err-text" id="loginErr"></div>
     <button class="primary" style="width:100%" id="btnVerify">验证并进入</button>
     <p class="tip" style="margin-top:14px">
       验证码有效期很短，过期请重新发送 <span class="mono">#抖音web</span> 获取。
@@ -87,21 +38,24 @@ th{color:var(--muted);font-weight:500}
 
 <!-- ② 选择机器人 -->
 <section id="viewBots" class="center hide">
-  <div class="card" style="width:420px">
+  <div class="card" style="width:min(430px,100%)">
     <h3>选择要操作的机器人</h3>
-    <p class="tip">每个机器人的抖音账号互相隔离，只显示你有权限的机器人。</p>
+    <p class="tip">每个机器人的抖音账号互相隔离，这里只列出你有权限操作的。</p>
     <div id="botList" class="grid" style="margin-top:14px;grid-template-columns:1fr"></div>
-    <div class="err" id="botErr"></div>
+    <div class="err-text" id="botErr"></div>
     <button class="ghost sm" id="btnLogout2" style="margin-top:10px">退出登录</button>
   </div>
 </section>
-
 <!-- ③ 控制台 -->
 <section id="viewMain" class="wrap hide">
-  <div class="row" style="margin-bottom:14px">
-    <div class="logo" style="font-size:18px">抖音续火控制台</div>
-    <span class="tag" id="curBot"></span>
-    <div style="margin-left:auto" class="row">
+  <div class="hero">
+    <div class="logo">🔥</div>
+    <div class="hero-text">
+      <div class="hero-kicker">HL DOUYIN PLUGIN</div>
+      <div class="hero-title" style="font-size:19px">抖音续火控制台</div>
+      <div class="hero-sub" id="curBot"></div>
+    </div>
+    <div class="row">
       <button class="ghost sm" id="btnSwitch">切换机器人</button>
       <button class="ghost sm" id="btnLogout">退出</button>
     </div>
@@ -109,19 +63,21 @@ th{color:var(--muted);font-weight:500}
 
   <div class="tabs">
     <button class="on" data-tab="accounts">账号与发信</button>
+    <button data-tab="chat">私信聊天</button>
     <button data-tab="login">抖音登录</button>
     <button data-tab="config">定时与推送</button>
     <button data-tab="status">状态与审计</button>
   </div>
-
   <div id="tabAccounts">
     <div class="card">
       <h3>抖音账号<span class="sp" id="accSum"></span></h3>
-      <table>
-        <thead><tr><th>账号</th><th>状态</th><th>续火好友</th><th>上次结果</th><th style="width:230px">操作</th></tr></thead>
-        <tbody id="accBody"></tbody>
-      </table>
-      <div class="row" style="margin-top:12px">
+      <div class="scroll-x">
+        <table>
+          <thead><tr><th>账号</th><th>状态</th><th>续火好友</th><th>上次结果</th><th style="width:270px">操作</th></tr></thead>
+          <tbody id="accBody"></tbody>
+        </table>
+      </div>
+      <div class="row" style="margin-top:14px">
         <button class="primary" id="btnRunAll">立即续火（全部机器人）</button>
         <button class="ghost" id="btnPushTest">推送上次结果</button>
       </div>
@@ -150,7 +106,7 @@ th{color:var(--muted);font-weight:500}
       <label>消息模板（留空则发随机一言）</label>
       <textarea id="fTpl" placeholder="{{friend}} 早上好，今天是 {{date}} {{weekday}}&#10;{{yiyan}}"></textarea>
       <p class="tip">可用占位符：<span class="mono" id="phList"></span></p>
-      <div class="row" style="margin-top:10px">
+      <div class="row" style="margin-top:12px">
         <button class="primary" id="btnSaveAcc">保存账号</button>
         <button class="ghost" id="btnResetAcc">清空表单</button>
         <span class="tip" id="accHint"></span>
@@ -158,8 +114,8 @@ th{color:var(--muted);font-weight:500}
     </div>
 
     <div class="card">
-      <h3>可视化发信</h3>
-      <p class="tip">直接给指定好友发一条自定义消息，不走模板、不计入续火记录。</p>
+      <h3>可视化发信<span class="sp">不走模板、不计入续火记录</span></h3>
+      <p class="tip">给指定好友发一条自定义消息。要看历史、要来回聊，用上面的「私信聊天」。</p>
       <div class="grid">
         <div>
           <label>使用账号</label>
@@ -172,7 +128,7 @@ th{color:var(--muted);font-weight:500}
       </div>
       <label>消息内容</label>
       <textarea id="sendText" placeholder="要发送的内容，支持换行与 emoji"></textarea>
-      <div class="row" style="margin-top:10px">
+      <div class="row" style="margin-top:12px">
         <button class="primary" id="btnSend">发送</button>
         <button class="ghost" id="btnLoadFriends">拉取好友会话列表</button>
         <button class="ghost hide" id="btnReloadFriends" title="忽略缓存，重新打开抖音拉一遍">重新拉取</button>
@@ -181,10 +137,80 @@ th{color:var(--muted);font-weight:500}
       <div id="friendPick" class="row" style="margin-top:10px"></div>
     </div>
   </div>
+  <!--
+    私信聊天。两态：#chatPick 选账号、#chatRoom 聊天，同时只显示一个。
+    分两态是因为「打开会话」是个有代价的动作（抢账号锁 + 开 Chromium，十几秒），
+    不能像切标签页那样随手触发，必须是用户点了某个账号才发生。
+  -->
+  <div id="tabChat" class="hide">
+    <div class="card hide" id="chatOff">
+      <h3>私信聊天已关闭</h3>
+      <p class="tip">主人可用 <span class="mono">#抖音设置 聊天 开</span> 打开。</p>
+    </div>
 
+    <div id="chatPick">
+      <div class="card">
+        <h3>选一个账号进入私信<span class="sp" id="chatDbSum"></span></h3>
+        <p class="tip">
+          点账号会在服务器上打开一个抖音聊天页并挂住登录态（默认空闲
+          <span class="mono" id="chatIdleTip">3 分钟</span>自动收）。
+          同一个账号不能一边续火一边聊天，两者抢同一把锁。
+        </p>
+        <div class="grid" id="chatAccList" style="margin-top:14px"></div>
+        <div class="err-text" id="chatPickErr"></div>
+      </div>
+      <div class="note cyan">
+        聊天记录存在本机的 <span class="hl">sqlite</span> 里，<span class="hl">不过期</span>——
+        抖音会话列表只保留最近若干条，本地这份会一直留着。关掉网页不会删记录，
+        删账号才会连记录一起清掉。
+      </div>
+    </div>
+
+    <div id="chatRoom" class="hide">
+      <div class="row" style="margin-bottom:12px">
+        <span class="dot" id="chatDot"></span>
+        <span id="chatAccName" style="font-weight:600"></span>
+        <span class="tag" id="chatState"></span>
+        <div class="row spread">
+          <button class="ghost sm" id="btnChatRefresh" title="重新读一遍抖音的会话列表">刷新会话</button>
+          <button class="danger sm" id="btnChatQuit">退出聊天</button>
+        </div>
+      </div>
+
+      <div class="chat">
+        <div class="chat-side">
+          <div class="chat-side-head">
+            <span>会话</span>
+            <span class="spread" id="chatPeerSum"></span>
+          </div>
+          <div class="chat-side-list" id="chatPeers"></div>
+        </div>
+
+        <div class="chat-main">
+          <div class="chat-head">
+            <span class="who" id="chatWho">未选会话</span>
+            <span class="tip spread" id="chatHeadTip"></span>
+          </div>
+
+          <div class="chat-flow" id="chatFlow">
+            <div class="chat-empty" id="chatEmpty">
+              <div style="font-size:30px">💬</div>
+              <div>从左边挑一个会话开始</div>
+            </div>
+          </div>
+
+          <div class="chat-input">
+            <textarea id="chatText" rows="1" placeholder="Enter 发送，Shift+Enter 换行" disabled></textarea>
+            <button class="primary" id="btnChatSend" disabled>发送</button>
+          </div>
+        </div>
+      </div>
+      <p class="tip" id="chatFoot" style="margin-top:10px"></p>
+    </div>
+  </div>
   <div id="tabLogin" class="hide">
     <div class="card">
-      <h3>扫码登录（自动抓取 Cookie）</h3>
+      <h3>扫码登录<span class="sp">自动抓取 Cookie</span></h3>
       <div class="grid">
         <div>
           <label>账号名称（留空则自动读取抖音昵称）</label>
@@ -209,7 +235,7 @@ th{color:var(--muted);font-weight:500}
       </div>
       <label>Cookie</label>
       <textarea id="mCookie" placeholder="sessionid=xxx; passport_csrf_token=yyy; ... 或 [{&quot;name&quot;:&quot;sessionid&quot;,...}]"></textarea>
-      <div class="row" style="margin-top:10px">
+      <div class="row" style="margin-top:12px">
         <button class="primary" id="btnManual">导入</button>
         <span class="tip" id="mHint"></span>
       </div>
@@ -241,6 +267,20 @@ th{color:var(--muted);font-weight:500}
       <p class="tip">拦截样式表会让元素塌成 0×0 被判定为不可见，所以样式表不在拦截范围内。</p>
     </div>
     <div class="card">
+      <h3>私信聊天</h3>
+      <div class="grid">
+        <div><label>启用聊天</label><select id="chEnable"><option value="1">启用</option><option value="0">关闭</option></select></div>
+        <div><label>空闲自动关闭(秒)</label><input id="chIdle" type="number" min="30" max="3600"></div>
+        <div><label>轮询间隔(ms)</label><input id="chPoll" type="number" min="1000" max="30000"></div>
+        <div><label>历史加载条数</label><input id="chHistory" type="number" min="10" max="500"></div>
+        <div><label>单条最长(字)</label><input id="chMax" type="number" min="1" max="5000"></div>
+      </div>
+      <p class="tip">
+        轮询间隔就是「对方回话后多久能看到」，同时也是服务端读页面的频率。
+        调到 1 秒不会更快——读一次页面本身要几百毫秒，只是白耗 CPU。
+      </p>
+    </div>
+    <div class="card">
       <h3>结果推送</h3>
       <div class="grid">
         <div><label>启用推送</label><select id="pEnable"><option value="1">启用</option><option value="0">关闭</option></select></div>
@@ -258,7 +298,7 @@ th{color:var(--muted);font-weight:500}
       <h3>渲染与更新</h3>
       <div class="grid">
         <div><label>文本渲染成图片</label><select id="rImage"><option value="1">出图</option><option value="0">纯文字</option></select></div>
-        <div><label>渲染倍率（1 = 620px 宽）</label><input id="rScale" type="number" min="0.6" max="2" step="0.1"></div>
+        <div><label>渲染倍率（1 = 900px 版面）</label><input id="rScale" type="number" min="0.6" max="2" step="0.1"></div>
         <div><label>更新后自动重启</label><select id="uRestart"><option value="1">自动重启</option><option value="0">手动重启</option></select></div>
         <div><label>更新日志条数</label><input id="uLogLimit" type="number" min="1" max="100"></div>
       </div>
@@ -276,7 +316,7 @@ th{color:var(--muted);font-weight:500}
     </div>
     <div class="card">
       <h3>操作审计</h3>
-      <div class="log"><table>
+      <div class="log scroll-x"><table>
         <thead><tr><th style="width:150px">时间</th><th style="width:150px">动作</th><th>详情</th></tr></thead>
         <tbody id="auditBody"></tbody>
       </table></div>
@@ -288,3 +328,7 @@ th{color:var(--muted);font-weight:500}
 <script src="app.js"></script>
 </body>
 </html>
+
+
+
+

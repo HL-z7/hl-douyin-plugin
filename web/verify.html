@@ -10,68 +10,77 @@
   这个页面拿到的是一张一次性票据，只能对某一个正在登录的浏览器「看一帧 / 点 / 拖 /
   打字」。它管不了账号、配置、审计，也没有任何通往主面板的入口——链接落在公网
   可达的地址上，页面上多一个入口就多一条被顺着摸进去的路。
+
+  样式与主面板共用 web/style.css（同一套配色、同样的玻璃卡）：用户在 QQ 里看到
+  状态图、点开验证链接、之后再进面板，中间不该有三种皮。下面只留这一页专用的
+  三个类——搬进公共样式表反而多出几个只有一处用到的类名。
+
+  href 用相对路径而不是 `/douyin/style.css`：web base 是可配的（config.webBase()），
+  页面自己不知道挂在哪个前缀下。这也是 lib/web.js 里 /verify 要把尾斜杠重定向掉的
+  原因——`/verify/` 下相对路径会解析到 `/verify/style.css`。
 -->
+<link rel="stylesheet" href="style.css">
 <style>
-:root{
-  --bg:#0f1116; --panel:#171a21; --panel2:#1e222b; --line:#282d38;
-  --text:#e6e8ee; --muted:#8b93a7; --brand:#fe2c55; --brand2:#25f4ee;
-  --ok:#3ddc97; --warn:#ffb454; --err:#ff5c5c;
+/* 远端画面。黑底不用变量：这是一张浏览器截图的衬底，越接近真实浏览器的空白越好 */
+.screen {
+  position: relative;
+  min-height: 180px;
+  border-radius: 14px;
+  overflow: hidden;
+  background: #000;
+  border: 1px solid var(--card-line);
 }
-*{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);
-  font:14px/1.6 -apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
-button{font:inherit;cursor:pointer;border:0;border-radius:8px;padding:8px 14px;
-  background:var(--panel2);color:var(--text);transition:.15s}
-button:hover{filter:brightness(1.25)}
-button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:linear-gradient(135deg,var(--brand),#ff6b81);color:#fff}
-button.sm{padding:5px 10px;font-size:13px}
-input{font:inherit;padding:9px 12px;border-radius:8px;border:1px solid var(--line);
-  background:#12151c;color:var(--text)}
-input:focus{outline:0;border-color:var(--brand)}
-.hide{display:none!important}
-.wrap{max-width:820px;margin:0 auto;padding:16px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px}
-.card+.card{margin-top:12px}
-.head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
-.logo{font-size:18px;font-weight:700;
-  background:linear-gradient(135deg,var(--brand),var(--brand2));
-  -webkit-background-clip:text;background-clip:text;color:transparent}
-.tag{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;
-  background:var(--panel2);color:var(--muted)}
-.tag.ok{background:rgba(61,220,151,.15);color:var(--ok)}
-.tag.err{background:rgba(255,92,92,.15);color:var(--err)}
-.tag.warn{background:rgba(255,180,84,.15);color:var(--warn)}
-.tip{color:var(--muted);font-size:13px}
-.mono{font-family:ui-monospace,Consolas,monospace;font-size:12px}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.screen{position:relative;background:#000;border:1px solid var(--line);
-  border-radius:10px;overflow:hidden;min-height:180px}
 /* touch-action:none 是必须的：不关掉浏览器的滚动手势，手机上根本拖不出滑块轨迹。
    -webkit-touch-callout:none 挡掉手机长按图片弹出的「保存图片」菜单——桌面端靠下面
    的 contextmenu 监听，移动端只有这个属性管得住。有了这两条与 user-select，
    pointerdown 里就不需要 preventDefault() 了（它会连带吃掉 click 事件，见脚本注释）。 */
-.screen img{display:block;width:100%;touch-action:none;user-select:none;
-  -webkit-user-drag:none;-webkit-touch-callout:none}
-.screen .mask{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-  background:rgba(15,17,22,.72);color:var(--muted);text-align:center;padding:20px}
-.dotmark{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;
-  border:2px solid var(--brand2);pointer-events:none;animation:pop .5s ease-out forwards}
-@keyframes pop{from{transform:scale(.4);opacity:1}to{transform:scale(1.8);opacity:0}}
-.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:99;
-  background:var(--panel2);border:1px solid var(--line);border-radius:10px;
-  padding:10px 18px;box-shadow:0 8px 30px rgba(0,0,0,.5)}
+.screen img {
+  display: block; width: 100%;
+  touch-action: none; user-select: none;
+  -webkit-user-drag: none; -webkit-touch-callout: none;
+}
+.screen .mask {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
+  background: rgba(20, 28, 42, .74);
+  backdrop-filter: blur(3px);
+  color: var(--muted); text-align: center;
+}
+/* 点击落点的涟漪。截图要等下一帧才更新，没有这个反馈会让人以为没点上 */
+.dotmark {
+  position: absolute;
+  width: 14px; height: 14px; margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid var(--brand-2);
+  pointer-events: none;
+  animation: pop .5s ease-out forwards;
+}
+@keyframes pop {
+  from { transform: scale(.4); opacity: 1; }
+  to   { transform: scale(1.8); opacity: 0; }
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="card">
-    <div class="head">
-      <span class="logo">抖音身份验证</span>
+<!-- 验证页只有一张截图，1120px 的面板宽度会把图拉得过大，这里收窄一档 -->
+<div class="wrap" style="max-width:820px">
+  <div class="hero">
+    <div class="logo">🔐</div>
+    <div class="hero-text">
+      <div class="hero-kicker">HL DOUYIN PLUGIN</div>
+      <div class="hero-title" style="font-size:19px">抖音身份验证</div>
+      <div class="hero-sub">一次性链接 · 只能操作这一次登录</div>
+    </div>
+    <div class="row">
       <span class="tag" id="state">连接中…</span>
       <span class="tag" id="left"></span>
     </div>
-    <p class="tip" id="hint">
+  </div>
+
+  <div class="card">
+    <h3>远端画面<span class="sp">每秒刷新一次</span></h3>
+    <p class="tip" style="margin-bottom:12px" id="hint">
       下面是机器人那台浏览器的实时画面。直接在图上点、按住拖（滑块）、用输入框打字，
       就跟你自己操作浏览器一样。验证过掉后 Cookie 会自动保存。
     </p>
@@ -81,11 +90,11 @@ input:focus{outline:0;border-color:var(--brand)}
     </div>
     <div class="row" style="margin-top:12px">
       <input id="text" placeholder="要输入的内容（如短信验证码）" autocomplete="off"
-        style="flex:1;min-width:160px">
+        style="flex:1;min-width:160px;width:auto">
       <button class="primary" id="btnType">输入</button>
-      <button class="sm" id="btnEnter">回车</button>
-      <button class="sm" id="btnBack">退格</button>
-      <button class="sm" id="btnRefresh">刷新画面</button>
+      <button class="ghost sm" id="btnEnter">回车</button>
+      <button class="ghost sm" id="btnBack">退格</button>
+      <button class="ghost sm" id="btnRefresh">刷新画面</button>
     </div>
     <p class="tip" style="margin-top:10px">
       输入前先点一下页面上的输入框，让光标落进去。画面每秒刷新一次，
@@ -99,11 +108,9 @@ input:focus{outline:0;border-color:var(--brand)}
     <p class="tip mono" id="lastAct" style="margin-top:6px"></p>
   </div>
 
-  <div class="card">
-    <p class="tip" style="margin:0">
-      这条链接只能操作这一次登录，管不了机器人的账号与配置，也进不了管理面板。
-      用完即失效，在 QQ 里发送 <span class="mono">#抖音web下线</span> 可立即作废。
-    </p>
+  <div class="note cyan">
+    这条链接只能操作这一次登录，管不了机器人的账号与配置，也进不了管理面板。
+    用完即失效，在 QQ 里发送 <span class="hl mono">#抖音web下线</span> 可立即作废。
   </div>
 </div>
 <div class="toast hide" id="toast"></div>

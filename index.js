@@ -9,15 +9,19 @@
  * - Express 路由与定时任务必须在导入期就绪：框架在插件加载完成后才给 Bot.express
  *   追加兜底重定向，晚于那一刻挂的路由会被吃掉；定时任务自己持有 job，
  *   锅巴改完 cron 调 scheduler.reschedule() 就能免重启生效。
+ * - 退出收尾同理要在导入期挂：它包的是 Bot.restart，而 `#重启` 随时可能来
+ *   （见 lib/shutdown.js —— 服务器上重启走 execve，不收就会留下 Chromium）。
  */
 import fs from "node:fs"
 import path from "node:path"
 import { pluginRoot, log } from "./lib/util.js"
 import { scheduler } from "./lib/scheduler.js"
 import { setupWeb } from "./lib/web.js"
+import { installShutdownHooks } from "./lib/shutdown.js"
 
 setupWeb()
 scheduler.reschedule()
+installShutdownHooks()
 
 const appsDir = path.join(pluginRoot, "apps")
 const files = fs.existsSync(appsDir) ? fs.readdirSync(appsDir).filter(f => f.endsWith(".js")) : []

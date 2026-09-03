@@ -534,6 +534,46 @@ export function supportGuoba() {
           component: "Switch",
         },
 
+        { component: "Divider", label: "聊天界面" },
+        {
+          field: "chat.enable",
+          label: "启用聊天界面",
+          bottomHelpMessage:
+            "面板上点账号即可进入该号的私信会话、看历史、发消息。" +
+            "关掉后入口消失、接口一律拒绝。注意它会为该账号挂着一个浏览器页面（比一天一次的续火暴露面更大）",
+          component: "Switch",
+        },
+        {
+          field: "chat.idleCloseSec",
+          label: "无人时自动关闭(秒)",
+          bottomHelpMessage:
+            "多久没人拉新消息就收掉聊天页并释放账号锁，默认 180。" +
+            "用户关掉网页不会通知服务端，只能靠这个兜底，否则那 200~400MB 内存要占到重启",
+          component: "InputNumber",
+          componentProps: { min: 30, max: 3600 },
+        },
+        {
+          field: "chat.pollMs",
+          label: "拉新消息间隔(毫秒)",
+          bottomHelpMessage: "默认 3000。只是本地读一遍页面，不向抖音发请求，所以可以比续火激进",
+          component: "InputNumber",
+          componentProps: { min: 1000, max: 30000 },
+        },
+        {
+          field: "chat.historyLimit",
+          label: "进会话时给几条历史",
+          bottomHelpMessage: "默认 60。往上翻页每次再给 40 条",
+          component: "InputNumber",
+          componentProps: { min: 10, max: 500 },
+        },
+        {
+          field: "chat.maxLength",
+          label: "单条消息字数上限",
+          bottomHelpMessage: "默认 500。抖音自己的限制更宽，这里只是挡住误粘一整篇文章",
+          component: "InputNumber",
+          componentProps: { min: 1, max: 5000 },
+        },
+
         { component: "Divider", label: "安全" },
         {
           field: "security.allowManualCookie",

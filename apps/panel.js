@@ -11,6 +11,7 @@ import { scheduler } from "../lib/scheduler.js"
 import { unbanAll, sessionList } from "../lib/auth.js"
 import { ticketStatus } from "../lib/remote.js"
 import { replyRender } from "../lib/render.js"
+import { closeAll as closeAllChats } from "../lib/chat.js"
 import {
   buildStatusData,
   statusText,
@@ -204,6 +205,24 @@ export class DouyinPanel extends plugin {
           const friends = (config.get("push.friends", []) || []).filter(f => String(f.userId) !== userId)
           config.set("push.friends", friends)
           return e.reply(`已移除推送好友 ${userId}，当前剩 ${friends.length} 个`)
+        }
+        case "聊天":
+        case "私信聊天": {
+          if (!on && !off) return e.reply("格式：#抖音设置 聊天 开/关")
+          config.set("chat.enable", on)
+          if (off) {
+            // 关掉开关不会自动收掉已经开着的会话，那些页面还挂着 Chromium 和账号锁；
+            // 而用户关它的意图就是「现在别用抖音登录态」，所以立刻全部收掉
+            const closed = await closeAllChats("聊天功能已关闭")
+            return e.reply(
+              `私信聊天已关闭${closed ? `，并收掉了 ${closed} 个开着的聊天会话` : ""}。` +
+                "面板里的聊天入口会消失，已存的聊天记录不删"
+            )
+          }
+          return e.reply(
+            "私信聊天已开启：在面板里点一个账号即可进入它的抖音私信。" +
+              "注意它会把一个抖音登录态挂上几分钟（默认空闲 3 分钟自动收），风险比续火高"
+          )
         }
         case "解封IP":
         case "解封ip":

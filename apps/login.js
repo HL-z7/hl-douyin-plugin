@@ -1,16 +1,22 @@
 /**
  * 抖音账号登录与凭证维护指令。
  *
- * 四条登录路径，覆盖不同场景：
- * - 扫码：`#抖音登录`，浏览器自动抓 Cookie，最省事
- * - 自动：`#抖音自动登录`，扫码之外再接管短信验证——抖音弹「身份验证」时插件自己
- *         点「接收短信验证码 → 发送验证码」，只跟你要那几位数字。异地登录、账号有
- *         风控标记的号常年卡在这一步，这条路不用点开任何链接
- * - 粘贴：`#抖音手动登录 账号名 Cookie`，短 Cookie 直接贴
- * - 文件：`#抖音文件登录 账号名` + 发一个 txt，QQ 输入框对超长文本会截断，
- *         抖音的完整 Cookie 常常超过限制，贴进去就是残缺的——用文件传才可靠
+ * 位置：指令层，只做「解析参数 → 调 lib/login.js 与 lib/store.js → 回消息」，
+ * 浏览器操作、Cookie 解析与加密落盘都在 lib 内。
+ * 协作模块：lib/login.js（扫码/短信/凭证检查）、lib/store.js（账号与 Cookie 落盘）、
+ * lib/bot.js（私信发送）、lib/remote.js（远程验证票据）、lib/spark.js（账号占用状态）、
+ * lib/audit.js（审计）。
  *
- * Cookie 等同于账号本体，所以群里一律拒收：出现了就尝试撤回并要求私聊重发。
+ * 四条登录路径，覆盖不同场景：
+ * - 扫码：`#抖音登录`，浏览器抓 Cookie 后自动落盘
+ * - 自动：`#抖音自动登录`，扫码之外再接管短信验证——抖音弹「身份验证」时插件自己点
+ *         「接收短信验证码 → 发送验证码」，只向发起人索取验证码数字。异地登录、账号有
+ *         风控标记的号常卡在这一步，这条路不需要打开任何链接
+ * - 粘贴：`#抖音手动登录 账号名 Cookie`，适合短 Cookie
+ * - 文件：`#抖音文件登录 账号名` + 发一个 txt。QQ 输入框会截断超长文本，而抖音完整
+ *         Cookie 常超出该限制，粘贴进去即残缺，因此长 Cookie 必须用文件传
+ *
+ * Cookie 等同于账号本体，因此群内一律拒收：出现即尝试撤回并要求私聊重发。
  */
 import fs from "node:fs"
 import path from "node:path"
@@ -35,6 +41,8 @@ export class DouyinLogin extends plugin {
       event: "message",
       priority: 800,
       rule: [
+        // 文件登录单开一条指令而不复用 `#抖音手动登录`：后者的正则会把后续参数当成
+        // Cookie 位置的内容吞掉。这里只收账号名，txt 由随后挂的上下文接收
         { reg: "^#?(dy|抖音)(文件|txt|TXT)登录", fnc: "fileLogin", permission: "master" },
         { reg: "^#?(dy|抖音)手动登录", fnc: "manualLogin", permission: "master" },
         // 必须排在扫码登录前面：`^#?(dy|抖音)(扫码)?登录` 不是全字匹配，
@@ -48,26 +56,36 @@ export class DouyinLogin extends plugin {
     })
   }
 
-  /** 扫码登录：二维码用图片发回，状态变化再补一条 */
+  /**
+   * 扫码登录：二维码用图片发回，状态变化再补一条文本。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} startLogin 的结果
+   */
   qrLogin(e) {
     return this.startLogin(e, e.msg.replace(/^#?(dy|抖音)(扫码)?登录\s*/, "").trim())
   }
 
   /**
-   * 自动登录 = 扫码登录 + 插件自己接管短信验证。
+   * 自动登录 = 扫码登录 + 插件接管短信验证。
    *
-   * 与 `#抖音登录` 只差一个 autoSms 标志，所以走同一个 startLogin，不另写一套流程。
-   * 注意它会真的往你绑定的手机发一条短信（只在抖音主动要求验证时才发）。
+   * 与 `#抖音登录` 只差一个 autoSms 标志，因此走同一个 startLogin，不另写一套流程。
+   * 传 true 表示显式打开，不读 security.autoSms。
+   * 它会真的向用户绑定的手机发一条短信（仅在抖音主动要求验证时才发）。
+   *
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} startLogin 的结果
    */
   autoLogin(e) {
     return this.startLogin(e, e.msg.replace(/^#?(dy|抖音)自动登录\s*/, "").trim(), true)
   }
 
   /**
-   * 扫码登录的公共主体。
+   * 扫码登录的公共主体，两条扫码指令共用。
    *
+   * @param {object} e 消息事件
    * @param {string} name 账号名，留空则登录成功后读抖音昵称
-   * @param {boolean} [autoSms] 是否接管短信验证。undefined 时跟 security.autoSms
+   * @param {boolean} [autoSms] 是否接管短信验证。undefined 时跟随 security.autoSms
+   * @returns {Promise<*>} 启动失败时为报错回复，否则为 undefined
    */
   async startLogin(e, name, autoSms) {
     const waitSec = config.num("security.qrLoginTimeout", 180, { min: 30, max: 600 })
@@ -77,10 +95,10 @@ export class DouyinLogin extends plugin {
     try {
       await startQrLogin(e.self_id, {
         accountName: name,
-        // 抖音弹验证时远程操作链接只私信发给发起人，不能发在群里
+        // 抖音弹验证时远程操作链接只私信发给发起人，不能进群
         userId: e.user_id,
         autoSms,
-        // 抖音的二维码约 60 秒换一张，换了就补发——QQ 里那张图不会自己更新，
+        // 抖音二维码约 60 秒换一张，换了就补发一张图：QQ 里已发出的图片不会自己更新，
         // 用户扫到作废的码会一直等不到结果
         onQrcode: async (base64, round) => {
           replied = true
@@ -94,15 +112,15 @@ export class DouyinLogin extends plugin {
         onStatus: async (status, message) => {
           if (status === "success") await e.reply(`✅ ${message}，可发送「#抖音账号」查看`)
           else if (status === "scanned") await e.reply("📱 已收到扫码，请在手机上点「确认登录」")
-          // 确认之后 Cookie 还要等页面跳一趟才落盘，这一句避免用户以为又卡住了
+          // 确认之后 Cookie 还要等页面跳转一趟才落盘，这一句用于说明中间的空档
           else if (status === "confirmed") await e.reply("🔑 已确认登录，正在取凭证，请稍等几秒…")
-          // verify 的正文由 onVerify 私信发，这里群里只留一句不含链接的提示
+          // verify 的正文由 onVerify 私信发，这里在当前会话只留一句不含链接的提示
           else if (status === "verify") await e.reply(`⚠️ ${message}`)
-          // sms 的正文由 onSmsRequest 发（它还要顺手挂上下文），这里不重复说一遍
+          // sms 的正文由 onSmsRequest 发（它还要挂上下文），此处不重复
           else if (["failed", "expired"].includes(status)) await e.reply(`❌ ${message}`)
         },
-        // 箭头函数：setContext/finish 是 plugin 实例方法，而这个回调是在 lib/login.js
-        // 内部触发的，必须闭包住这里的 this
+        // 箭头函数：setContext/finish 是 plugin 实例方法，而这个回调由 lib/login.js
+        // 内部触发，必须闭包住这里的 this
         onSmsRequest: info => this.askSmsCode(e, info),
         onVerify: link => sendVerifyLink(e, link),
       })
@@ -110,8 +128,8 @@ export class DouyinLogin extends plugin {
       return e.reply(`扫码登录启动失败：${toError(error).message}`)
     }
 
-    // 出码要真开浏览器加载抖音首页，慢机器上实测能到 45 秒以上（passport 的 JS 要和
-    // 首页推荐流抢主线程），所以这句只是安抚，不代表已经失败
+    // 出码要真开浏览器加载抖音首页，慢机器上实测超过 45 秒（passport 的 JS 与首页推荐流
+    // 抢主线程），因此这条提示只说明仍在进行，不代表已经失败
     setTimeout(() => {
       if (!replied)
         e.reply("二维码仍在获取中（慢机器上出码可能要一分钟），若最终报错可改用「#抖音文件登录 账号名」").catch(() => {})
@@ -119,18 +137,25 @@ export class DouyinLogin extends plugin {
   }
 
   /**
-   * 短信已经发出去了，挂上下文等用户把验证码发回来。
+   * 短信已下发，挂上下文等用户把验证码发回来。
    *
-   * 上下文一律按私聊键（isGroup=false → conKey 用 user_id），所以用户在群里回、
-   * 私聊回都能对上同一个会话；而 loader 的 context hook 优先于 rule 匹配
-   * （lib/plugins/loader.js:205），那条纯数字消息不会被别的插件抢走。
+   * 上下文一律按私聊键（setContext 第二参 isGroup=false → conKey 用 user_id，
+   * 框架 lib/plugins/plugin.js:72-73），因此用户在群里回、私聊回都能对上同一个会话；
+   * 而 loader 的 context hook 在 rule 匹配之前执行（框架 lib/plugins/loader.js:236-250），
+   * 那条纯数字消息不会被别的插件抢走。
    *
-   * 提示优先私信：验证码本身用完即废，但没必要让整个群看见「某人正在登录哪个号」。
-   * 私信发不出去（没加好友、临时会话被拒）就退回当前会话，总比让人干等超时好。
+   * 提示优先私信：验证码用完即废，但没必要让整个群看见「某人正在登录哪个号」。
+   * 私信发不出去（未加好友、临时会话被拒）就退回当前会话，优于让用户干等超时。
+   *
+   * @param {object} e 消息事件
+   * @param {object} info lib/login.js 的 onSmsRequest 载荷
+   * @param {string} info.sessionId 登录会话 id，提交验证码时要带回
+   * @param {string} [info.phone] 抖音页面上显示的打码手机号
+   * @param {number} [info.ttl] 会话剩余秒数，来自 security.verifyTimeout
    */
   async askSmsCode(e, { sessionId, phone, ttl }) {
-    // 上下文超时比会话期限早 10 秒收尾：先由这里回一句「已超时」，
-    // 免得用户刚看到「超时已取消」又收到会话那边的 expired 提示，看着像出了两次错
+    // 上下文超时比会话期限早 10 秒收尾：先由这里回一句「已超时」，避免用户刚看到
+    // 「超时已取消」又收到会话那边的 expired 提示，像是出了两次错
     const wait = Math.max(60, Number(ttl || 600) - 10)
     this.setContext("receiveSmsCode", false, wait, "等待验证码超时，本次自动登录已取消")
     this.e.dySessionId = sessionId
@@ -149,7 +174,11 @@ export class DouyinLogin extends plugin {
     }
   }
 
-  /** 上下文回调：这条消息要么是验证码，要么是取消 */
+  /**
+   * 上下文回调：这条消息要么是验证码，要么是取消。
+   * sessionId 从 setContext 存下的事件对象上取回（getContext 返回的就是当时那个 e）。
+   * @returns {Promise<*>} e.reply 的结果
+   */
   async receiveSmsCode() {
     const e = this.e
     const text = String(e.msg || "").trim()
@@ -157,21 +186,26 @@ export class DouyinLogin extends plugin {
 
     if (/^(取消|cancel|退出)$/i.test(text)) {
       this.finish("receiveSmsCode")
-      // 会话本身留给超时兜底收尾：这里强行取消会连带关掉浏览器页面，
-      // 而用户可能只是想换个方式（比如自己去点远程验证页面）
+      // 不主动取消登录会话，留给它自己的超时兜底收尾：在这里强行取消会连带关掉浏览器页面，
+      // 而用户可能只是想换个方式过验证（比如自己打开远程验证页面）
       return e.reply("已取消填写验证码，本次登录会在超时后自动结束")
     }
-    // 不像验证码的消息就继续等：随便说句话不该把上下文丢掉，
-    // 但也不能吞掉——原样提示一句，用户才知道机器人还在等
+    // 不像验证码的消息就继续等：随便说句话不该丢掉上下文；但也不能默默吞掉，
+    // 回一句提示用户才知道机器人仍在等
     if (!/^\D{0,6}\d{4,8}\D{0,6}$/.test(text)) return e.reply("请把短信里的验证码发给我（4~8 位数字），或发送「取消」中止")
 
     const r = await submitSmsCode(sessionId, text)
-    // 还能重试就留着上下文，让用户直接再发一次；否则收尾
+    // 还能重试就留着上下文，用户可直接再发一次；否则收尾
     if (!r.retry) this.finish("receiveSmsCode")
     return e.reply(`${r.ok ? "✅" : "❌"} ${r.message}`)
   }
 
-  /** 手动登录：群里出现 Cookie 属于泄露，直接拒收并提示撤回 */
+  /**
+   * 手动登录：`#抖音手动登录 账号名 Cookie`。
+   * 群内出现 Cookie 属于凭证泄露，直接拒收并提示撤回。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} e.reply 的结果
+   */
   async manualLogin(e) {
     const rest = e.msg.replace(/^#?(dy|抖音)手动登录\s*/, "").trim()
     if (e.isGroup) return rejectInGroup(e, rest, "#抖音手动登录 账号名 Cookie")
@@ -195,8 +229,13 @@ export class DouyinLogin extends plugin {
 
   /**
    * 文件登录：先记住账号名并挂上下文，再等用户把 txt 发过来。
-   * loader 的 deal() 里 context hook 优先于 rule 匹配（lib/plugins/loader.js:205），
-   * 所以挂上下文期间用户发的下一条消息会直接进 `receiveCookieFile`。
+   *
+   * loader 的 deal() 里 context hook 在 rule 匹配之前执行
+   * （框架 lib/plugins/loader.js:236-250），因此挂上下文期间用户发的下一条消息（带 e.file）
+   * 会直接进 `receiveCookieFile`，不需要为文件消息另配 rule。
+   *
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} e.reply 的结果
    */
   async fileLogin(e) {
     const name = e.msg.replace(/^#?(dy|抖音)(文件|txt|TXT)登录\s*/, "").trim()
@@ -218,7 +257,11 @@ export class DouyinLogin extends plugin {
     )
   }
 
-  /** 上下文回调：这条消息要么带文件，要么是取消 */
+  /**
+   * 上下文回调：这条消息要么带文件，要么是取消。
+   * 账号名从 setContext 存下的事件对象上取回。
+   * @returns {Promise<*>} e.reply 的结果
+   */
   async receiveCookieFile() {
     const e = this.e
     const name = String(this.getContext("receiveCookieFile")?.dyAccountName || "").trim()
@@ -227,7 +270,7 @@ export class DouyinLogin extends plugin {
       this.finish("receiveCookieFile")
       return e.reply("已取消文件登录")
     }
-    // 没带文件就继续等，避免用户随便说句话就把上下文丢了
+    // 没带文件就继续等，避免用户随便说句话就丢掉上下文
     if (!e.file) return e.reply("请直接发送 txt 文件，或发送「取消」中止")
 
     this.finish("receiveCookieFile")
@@ -244,7 +287,8 @@ export class DouyinLogin extends plugin {
     } catch (error) {
       return e.reply(`读取文件失败：${toError(error).message}`)
     } finally {
-      // Cookie 明文不该在磁盘上多留一秒
+      // Cookie 明文不在磁盘上多留：下载→解析完即删（security.deleteCookieFile，默认 true）。
+      // 放在 finally 里，解析抛错的那条路也会清掉
       if (config.bool("security.deleteCookieFile", true)) {
         try {
           fs.rmSync(filePath, { force: true })
@@ -255,7 +299,13 @@ export class DouyinLogin extends plugin {
     }
   }
 
-  /** 逐个检查凭证。结果按 spark.cookieCheckTTL 缓存，短时间重复检查不会再打抖音 */
+  /**
+   * 逐个检查账号凭证是否仍然有效。
+   * 每个账号都要真开浏览器访问抖音，因此串行执行；结论按 spark.cookieCheckTTL
+   * （默认 30 分钟）缓存在 store 里，缓存期内重复检查不会再请求抖音。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} 汇总结果的回复
+   */
   async checkCookies(e) {
     const accounts = store.list(e.self_id)
     if (!accounts.length) return e.reply("没有可检查的账号")
@@ -272,6 +322,13 @@ export class DouyinLogin extends plugin {
     return e.reply(lines.join("\n"))
   }
 
+  /**
+   * 账号列表：名称、可用状态、续火好友与上次结果。
+   * 状态优先级：缺 Cookie > 凭证失效 > 已停用 > 正常；「运行中」另取自 lib/spark.js
+   * 的账号锁（续火或聊天窗占用同一把锁）。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} e.reply 的结果
+   */
   async listAccounts(e) {
     const accounts = store.list(e.self_id)
     if (!accounts.length) return e.reply("当前机器人还没有抖音账号，发送「#抖音登录」开始")
@@ -296,6 +353,11 @@ export class DouyinLogin extends plugin {
     return e.reply(lines.join("\n"))
   }
 
+  /**
+   * 按账号名删除账号及其 Cookie。store.remove 会连带清掉该账号的聊天记录。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} e.reply 的结果
+   */
   async removeAccount(e) {
     const name = e.msg.replace(/^#?(dy|抖音)删除账号\s*/, "").trim()
     if (!name) return e.reply("格式：#抖音删除账号 账号名")
@@ -307,7 +369,11 @@ export class DouyinLogin extends plugin {
   }
 }
 
-/** 好友的一行展示：主名 + 备注/别名，和状态面板保持一致的写法 */
+/**
+ * 好友的一行展示：主名 + 备注/别名，与状态面板（lib/panel.js）保持同一写法。
+ * @param {{name?: string, note?: string, alias?: string[]}} target 续火目标
+ * @returns {string} 无 name 时返回空串
+ */
 function targetLine(target) {
   if (target?.note) return `${target.name}（${target.note}）`
   if (target?.alias?.length) return `${target.name} / ${target.alias.join(" / ")}`
@@ -317,9 +383,17 @@ function targetLine(target) {
 /**
  * 把远程验证链接私信给发起人。
  *
- * 只私信，一个字都不进群：这条链接落在公网可达的地址上，谁点开谁就能操作那个
- * 正在登录的浏览器。所以它和 `#抖音web` 的验证码一样——发不出去就当场作废，
- * 留着只是多一个可被爆破的目标（同 apps/web.js 的 openWeb）。
+ * 只私信，一个字都不进群：这条链接落在公网可达的地址上，谁点开谁就能操作那个正在登录的
+ * 浏览器。因此它与 `#抖音web` 的验证码同一处置原则——发不出去就当场作废，留着只是多一个
+ * 可被爆破的目标（同 apps/web.js 的 openWeb）。
+ *
+ * @param {object} e 消息事件
+ * @param {object} link lib/login.js 的 onVerify 载荷
+ * @param {string} link.url 远程操作页面地址，token 在 hash 里
+ * @param {string} link.token 票据 token，私信失败时用它撕票
+ * @param {number} [link.ttl] 有效期秒数，来自 security.verifyTimeout
+ * @param {string} link.hint 验证类型描述，写进提示让用户先知道要过哪一道
+ * @param {string} [link.shot] 现场截图的本地路径，可能为空串
  */
 async function sendVerifyLink(e, link) {
   const minutes = Math.max(1, Math.round((link.ttl || 600) / 60))
@@ -336,7 +410,7 @@ async function sendVerifyLink(e, link) {
 
   try {
     await sendPrivate(e.self_id, e.user_id, msg)
-    // 现场截图另发一条：跟链接挤在一条消息里，长文本容易把图挤到看不见。
+    // 现场截图另发一条：与链接挤在同一条消息里时，长文本容易把图挤到看不见。
     // 读成 buffer 而不是传 file:// 路径——各适配器对本地路径的支持不一致，buffer 都认
     if (link.shot) {
       try {
@@ -346,7 +420,7 @@ async function sendVerifyLink(e, link) {
         ])
       } catch {}
     }
-    // 群里那句提示由 onStatus 的 verify 分支发（它不含链接），这里不重复说一遍
+    // 群里那句提示由 startLogin 的 onStatus verify 分支发（不含链接），此处不重复
   } catch (error) {
     revokeTicket(link.token)
     await e.reply(
@@ -356,7 +430,13 @@ async function sendVerifyLink(e, link) {
   }
 }
 
-/** 群内一律拒收 Cookie：带内容的先尝试撤回，再提示私聊 */
+/**
+ * 群内一律拒收 Cookie：带内容的先尝试撤回，再提示私聊。
+ * @param {object} e 消息事件
+ * @param {string} rest 指令后的剩余文本，非空即认为已经把 Cookie 发进群了
+ * @param {string} usage 正确用法，回复里原样给出
+ * @returns {Promise<*>} e.reply 的结果
+ */
 async function rejectInGroup(e, rest, usage) {
   if (rest) {
     try {
@@ -368,8 +448,11 @@ async function rejectInGroup(e, rest, usage) {
 }
 
 /**
- * 文件下载直链。ICQQ 的群文件与好友文件取法不同，
- * 少数适配器直接把 http 链接放在 e.file.url 上，所以三条路都要试。
+ * 取文件下载直链。
+ * ICQQ 的群文件与好友文件取法不同，少数适配器直接把 http 链接放在 e.file.url 上，
+ * 因此三条路依次尝试。
+ * @param {object} e 带 file 的消息事件
+ * @returns {Promise<string>} 直链；三条路都不通时返回空串
  */
 async function resolveFileUrl(e) {
   const direct = e.file?.url
@@ -379,11 +462,18 @@ async function resolveFileUrl(e) {
   return ""
 }
 
-/** 解析 + 落盘的公共收尾，三条登录路径共用同一套报错文案 */
+/**
+ * 解析 + 落盘的公共收尾，手动登录与文件登录共用同一套报错文案。
+ * @param {object} e 消息事件
+ * @param {string} name 账号名
+ * @param {string} cookie 原始 Cookie 文本
+ * @param {"text"|"file"} source 来源，只写进审计日志
+ * @returns {Promise<*>} e.reply 的结果
+ */
 async function saveCookie(e, name, cookie, source) {
   if (!name) return e.reply("缺少账号名")
   try {
-    // 先解析一遍，格式不对在写盘前就报出来
+    // 先解析一遍：格式不对要在写盘前就报出来，不能让残缺 Cookie 落进账号文件
     parseCookieInput(cookie)
     const account = manualLogin(e.self_id, { name, cookie, source })
     return e.reply(

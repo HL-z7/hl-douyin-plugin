@@ -9,20 +9,39 @@ import { audit } from "./lib/audit.js"
 import { log, toError, formatTime } from "./lib/util.js"
 
 /**
- * 锅巴配置支持（锅巴会自动扫描 plugins/<name>/guoba.support.js）
+ * 锅巴配置支持：把插件配置暴露给锅巴（Guoba-Plugin）面板。
  *
- * 复用而非另起一套：读写都走 lib/config.js 的同一个 Config 单例，
- * 所以锅巴、Web 面板、#抖音设置 三处改的是同一份 config/config.yaml，
- * 保存后顺手 reschedule()，改完 cron 不用重启。
+ * 锅巴自动扫描 plugins/<name>/guoba.support.js 并调用本文件导出的 supportGuoba()，
+ * 用其中的 configInfo.schemas 生成表单，打开面板时调 getConfigData()，点确定时调
+ * setConfigData(data, { Result })。
  *
- * 账号那一节是个例外：Cookie 与续火好友不在 config.yaml 里（在
- * data/accounts/<botId>.json，且 Cookie 是加密的），所以它不走上面那条
- * 扁平点路径的通道，而是像 pushGroups 一样单独映射到 lib/store.js。
+ * 表单字段分两条通道落盘：
+ * 1. 扁平点路径 —— schemas 里的 field 直接写成 `spark.cron` 这类点路径，读写都走
+ *    lib/config.js 的同一个 Config 单例。锅巴、Web 面板、#抖音设置 三处改的是同一份
+ *    config/config.yaml，任一处保存后另两处立即读到新值。保存后调 scheduler.reschedule()，
+ *    改 cron 无需重启。
+ * 2. 单独映射 —— pushGroups / pushFriends / accounts 三个 field 不是配置路径：前两个由
+ *    targetsToForm / formToTargets 在表单结构与 push.groups / push.friends 之间转换；
+ *    账号数据在 data/accounts/<botId>.json（且 Cookie 加密），由 accountsToForm /
+ *    saveAccounts 映射到 lib/store.js。
+ *
+ * 对外导出：`supportGuoba()`，锅巴约定的唯一入口。
+ *
+ * 依赖 lib/config.js、lib/scheduler.js、lib/template.js、lib/store.js、lib/login.js、
+ * lib/bot.js、lib/audit.js、lib/util.js 与 lodash。
  */
 
+/** 可用占位符提示串，形如 `{{friend}} {{date}} ...`，拼进多处 bottomHelpMessage */
 const PH = PLACEHOLDERS.map(p => `{{${p}}}`).join(" ")
 
-/** 推送目标：yaml 里允许写字符串，锅巴表单统一成 { botId, xxxId } 结构 */
+/**
+ * push.groups / push.friends → 锅巴子表单行。
+ * 手写 yaml 时允许直接写群号字符串，而 GSubForm 只认对象，故统一成 { botId, [field] }。
+ *
+ * @param {Array} list 配置里的原始列表，元素可为对象或纯 id 字符串
+ * @param {"groupId"|"userId"} field 目标 id 在表单里的字段名
+ * @returns {Array<object>} id 为空的行被过滤掉
+ */
 function targetsToForm(list, field) {
   return (list || [])
     .map(item =>
@@ -33,6 +52,12 @@ function targetsToForm(list, field) {
     .filter(item => item[field])
 }
 
+/**
+ * 锅巴子表单行 → push.groups / push.friends。
+ * @param {Array} list 表单提交的行
+ * @param {"groupId"|"userId"} field
+ * @returns {Array<object>} id 为空的行被过滤掉
+ */
 function formToTargets(list, field) {
   return (list || [])
     .map(item => ({
@@ -45,16 +70,20 @@ function formToTargets(list, field) {
 // ────────────────────────────── 账号子表单 ──────────────────────────────
 
 /**
- * 上一次交给锅巴的账号 id 集合。
+ * 上一次交给锅巴的账号 id 集合，元素形如 `${botId}:${accountId}`。
  *
- * 子表单里删掉一张卡片，前端只是把它从数组里去掉，保存时我们收到的是「少了一行」，
- * 光看提交内容分不清「用户删了它」和「它是保存期间新登录进来的」。所以记下发出去
- * 那一刻的快照：只有当时就在列表里、如今不在提交里的账号才算被删。
- * 快照之后扫码登录新增的账号不在集合里，不会被误删。
+ * 子表单删掉一张卡片时，前端只是把它从数组里移除，提交内容里表现为「少了一行」，
+ * 无法区分「用户删除了它」与「它是本次打开面板之后新登录进来的」。因此在
+ * accountsToForm() 发出数据的那一刻记录快照：只有当时就在列表里、而本次提交没带回来的
+ * 账号才判定为删除。快照之后新增的账号不在集合里，不会被误删。
  */
 let lastAccountIds = new Set()
 
-/** Cookie 现状的一句话，只读展示。密文与明文都不出现在这里 */
+/**
+ * Cookie 现状的一句话描述，只读展示。密文与明文都不出现在返回值里。
+ * @param {object} acc store.list() 给出的账号视图（含 hasCookie / cookieInvalid）
+ * @returns {string}
+ */
 function describeCookie(acc) {
   if (!acc.hasCookie) return "未配置，请在下方粘贴 Cookie"
   if (acc.cookieInvalid) return "已失效，请重新粘贴 Cookie 或扫码登录"
@@ -63,11 +92,14 @@ function describeCookie(acc) {
 }
 
 /**
- * 把所有机器人下的账号摊平成锅巴子表单的行。
+ * 把所有机器人下的账号摊平成锅巴子表单的行，同时刷新 lastAccountIds 快照。
  *
- * Cookie 一律不回填（`cookie: ""`）：它等同于账号本体，锅巴面板是浏览器里的页面，
- * 回填就意味着密文会随接口发到前端。留空同时也是「不修改」的语义，
- * 用户只想改续火好友时不必重新粘一遍 Cookie。
+ * Cookie 一律不回填（`cookie: ""`）：它等同于账号本体，而锅巴面板是浏览器里的页面，
+ * 回填意味着密文随接口发到前端。留空同时也是「不修改」的语义，用户只改续火好友时
+ * 不必重新粘贴 Cookie。
+ *
+ * @returns {Array<object>} 每行含 botId / id / name / enable / cookieState / cookie /
+ *   targets（targetText 顿号连接）/ messageTemplate / note
  */
 function accountsToForm() {
   const rows = []
@@ -92,13 +124,16 @@ function accountsToForm() {
 }
 
 /**
- * 保存账号子表单。
+ * 保存账号子表单：校验全部行 → 逐行落盘 → 按快照差集删除被移除的账号。
  *
- * 分两趟：先把所有行校验完（账号名、归属机器人、Cookie 格式、模板占位符），
- * 再统一落盘。一趟边校验边写的话，第三行的 Cookie 格式错误会留下前两行已改、
- * 后面全没改的半截状态，而锅巴只会显示一句报错。
+ * 分两趟执行。第一趟只校验并生成 plans（账号名、归属机器人、Cookie 格式、模板占位符），
+ * 第二趟才写盘。若边校验边写，第三行的 Cookie 格式错误会留下「前两行已改、其余未改」的
+ * 半截状态，而锅巴只会展示一句报错，用户无从判断哪些改动生效了。
  *
- * @returns {string[]} 给用户看的结果摘要
+ * @param {Array<object>} rows 锅巴提交的账号行；调用方需把 undefined 归一成 []
+ * @returns {string[]} 给用户看的结果摘要（Cookie 更新与账号删除各一条）
+ * @throws {Error} 账号名为空、同一机器人下重名、无归属机器人、手动导入 Cookie 开关关闭、
+ *   Cookie 格式非法、消息模板占位符非法
  */
 function saveAccounts(rows) {
   const fallbackBot = pickDefaultBot()
@@ -129,7 +164,7 @@ function saveAccounts(rows) {
     if (cookie) {
       if (!allowCookie)
         throw new Error("「允许手动导入 Cookie」当前是关闭的，请先打开该开关并保存，再回来粘贴 Cookie")
-      // 格式错误在这里就报出来，不要等写盘时才发现
+      // 格式校验提前到写盘之前，避免落盘阶段才发现非法 Cookie 而留下半截状态
       assertLoginCookie(parseCookieInput(cookie))
     }
 
@@ -149,17 +184,17 @@ function saveAccounts(rows) {
 
   const summary = []
   for (const plan of plans) {
-    // 先写普通字段（含改名），再导 Cookie。顺序反过来的话，改名行会因为
-    // manualLogin 按新名字找不到账号而多建一个
+    // 先写普通字段（含改名）再导 Cookie：顺序颠倒时，改名行会因 manualLogin 按新名字
+    // 找不到账号而额外新建一个（store.upsert 无 id 时按 name 定位）
     const account = store.upsert(plan.botId, plan.input)
     if (plan.cookie) {
-      // 走 manualLogin 而不是直接 store.upsert：allowManualCookie 开关与审计都在它里面
+      // 走 manualLogin 而非直接 store.upsert：allowManualCookie 开关判定与审计记录都在其中
       manualLogin(plan.botId, { name: account.name, cookie: plan.cookie, source: "guoba" })
       summary.push(`${account.name} 的 Cookie 已更新`)
     }
   }
 
-  // 打开面板时在列表里、这次提交没带回来的，就是被用户删掉的卡片
+  // 快照差集：打开面板时在列表里、本次提交没带回来的行，即用户删除的卡片
   for (const key of lastAccountIds) {
     if (kept.has(key)) continue
     const [botId, accountId] = key.split(":")
@@ -174,6 +209,15 @@ function saveAccounts(rows) {
   return summary
 }
 
+/**
+ * 锅巴约定的入口，返回插件信息与配置表单定义。
+ *
+ * configInfo.schemas 里的 field 即落盘位置：`spark.*`、`push.*`、`web.*`、`chat.*`、
+ * `security.*`、`render.*`、`update.*`、`debug.*` 为 config/config.yaml 的点路径；
+ * `accounts`、`pushGroups`、`pushFriends` 三个不是配置路径，由 setConfigData 单独映射。
+ *
+ * @returns {{pluginInfo: object, configInfo: object}}
+ */
 export function supportGuoba() {
   return {
     pluginInfo: {
@@ -190,6 +234,7 @@ export function supportGuoba() {
 
     configInfo: {
       schemas: [
+        // 账号：不落 config.yaml，由 accountsToForm / saveAccounts 映射到 data/accounts/<botId>.json
         { component: "Divider", label: "抖音账号与 Cookie" },
         {
           field: "accounts",
@@ -269,6 +314,7 @@ export function supportGuoba() {
           },
         },
 
+        // 以下各节的 field 均为 config.yaml 的点路径，落盘位置见 lib/config.js 的 DEFAULT_CONFIG
         { component: "Divider", label: "定时续火" },
         {
           field: "spark.enable",
@@ -380,6 +426,7 @@ export function supportGuoba() {
           componentProps: { min: 0, max: 3600 },
         },
 
+        // push.*；其中 pushGroups / pushFriends 是表单专用字段，落盘为 push.groups / push.friends
         { component: "Divider", label: "结果推送" },
         {
           field: "push.enable",
@@ -689,7 +736,11 @@ export function supportGuoba() {
         },
       ],
 
-      /** 锅巴打开面板时读：直接给当前生效的配置（默认值已合并过） */
+      /**
+       * 锅巴打开面板时读取。
+       * config.reload() 重新读盘以反映其它入口（Web 面板 / #抖音设置 / 手改文件）的改动，
+       * 返回的是与默认值合并后的完整配置树，再补上三个表单专用字段。
+       */
       getConfigData() {
         const data = config.reload()
         return {
@@ -700,7 +751,16 @@ export function supportGuoba() {
         }
       },
 
-      /** 锅巴点确定时写：扁平点路径重新嵌套，落盘后立刻换定时表 */
+      /**
+       * 锅巴点确定时写入：扁平点路径重新嵌套 → 校验 → 账号落盘 → 配置落盘 → 重排定时表。
+       *
+       * 只接受 DEFAULT_CONFIG 里声明过的 `<section>.<key>`，未声明的键即使出现在提交里也不
+       * 写入，避免表单结构变化时把陌生字段带进 config.yaml。
+       *
+       * @param {object} data 锅巴提交的扁平表单值
+       * @param {{Result: object}} ctx 锅巴注入的结果构造器
+       * @returns {object} Result.ok / Result.error
+       */
       setConfigData(data, { Result }) {
         try {
           const patch = {}
@@ -723,7 +783,7 @@ export function supportGuoba() {
           const cron = entries["spark.cron"]
           if (cron !== undefined && !String(cron).trim()) return Result.error("定时表达式不能为空")
 
-          // 推送范围写错会导致「配了目标却完全不推」，比报错更难查，所以拦在保存前
+          // 推送范围非法会表现为「配了目标却完全不推送」，比直接报错更难定位，故拦在保存前
           if (entries["push.target"] !== undefined && !PUSH_TARGETS.includes(String(entries["push.target"])))
             return Result.error(`推送范围只能是 ${PUSH_TARGETS.join(" / ")}`)
 
@@ -733,14 +793,14 @@ export function supportGuoba() {
             if (min > max) return Result.error("好友间隔最小值不能大于最大值")
           }
 
-          // 写错的 {{xxx}} 在这里拦住，不然会原样发给好友
+          // 非法 {{xxx}} 在此拦下，否则会原样发送给好友（normalizeTemplate 校验失败即抛）
           if (entries["spark.messageTemplate"])
             normalizeTemplate(entries["spark.messageTemplate"], "全局消息模板")
 
-          // 账号先落盘：它有可能因为 Cookie 格式不对而整体失败，
-          // 放在 config.setMany 之前，失败时配置也保持原样，用户重来一次就行。
-          // 锅巴的 handleFormValues 会把空数组整个丢掉，所以「删光了所有账号」到这里
-          // 是 data.accounts === undefined，必须当成空列表处理，否则最后一个账号删不掉
+          // 账号先落盘：它可能因 Cookie 格式非法而整体抛出，放在 config.setMany 之前，
+          // 失败时配置保持原样，用户修正后重试即可。
+          // 锅巴 handleFormValues 会丢弃空数组字段，删光全部卡片时收到 undefined 而非 []，
+          // 因此按 data.accounts || [] 处理；改用 "accounts" in data 判断会导致最后一个账号无法删除
           const accountNotes = saveAccounts(data?.accounts || [])
 
           config.setMany(entries)

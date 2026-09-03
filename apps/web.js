@@ -1,9 +1,14 @@
 /**
- * Web 面板入口指令。
+ * Web 面板入口指令：`#抖音web` 取面板地址与一次性验证码，`#抖音web下线` 作废全部凭据。
  *
- * 安全模型：群里只出现「面板地址」，验证码永远走私信；两者分离之后，
- * 群成员看到链接也进不去。验证码本身还绑定了「发起人是哪些机器人的主人」，
- * 进面板后只能选这些机器人，改参数越权不了（校验在 lib/auth.js 的 selectBot）。
+ * 位置：指令层，只做「读配置 → 调 lib 签发/作废凭据 → 分私信与群两路回消息」。
+ * 协作模块：面板本体与路由在 lib/web.js，验证码与面板会话在 lib/auth.js，
+ * 远程验证链接（扫码登录遇到人工验证时用）在 lib/remote.js，登录会话在 lib/login.js，
+ * 发送走 lib/bot.js，地址打码走 lib/util.js 的 maskUrl。
+ *
+ * 安全模型：群消息里只出现面板地址（默认再打码），验证码只走私信。两者分离后，
+ * 群成员看到链接也进不去。验证码另绑定「发起人是哪些机器人的主人」，进面板后只能选
+ * 这些机器人，改请求参数越权不了（校验在 lib/auth.js 的 selectBot）。
  */
 import { config } from "../lib/config.js"
 import { toError, maskUrl } from "../lib/util.js"
@@ -27,11 +32,17 @@ export class DouyinWeb extends plugin {
     })
   }
 
+  /**
+   * 签发一次性验证码并把面板地址交给用户：完整链接私信，群里只回一句打码后的确认。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} e.reply 的结果
+   */
   async openWeb(e) {
     if (!config.bool("web.enable", true))
       return e.reply("Web 面板未启用，可在锅巴或 config/config.yaml 中打开 web.enable")
 
-    // 只允许进入「他是主人」的机器人，多 bot 下不能靠改参数越权
+    // 只允许进入「他是主人」的机器人。这里算出的 allowedBots 存进验证码票据，
+    // 之后 selectBot 只认这个名单，多 bot 部署下改请求参数越权不了
     const allowedBots = listBots()
       .map(b => b.uin)
       .filter(uin => mastersOf(uin).includes(String(e.user_id)))
@@ -43,13 +54,13 @@ export class DouyinWeb extends plugin {
     /*
      * 一键进入链接：验证码放 URL 的 hash 而不是 query。
      *
-     * 想要的效果是「点一下就进面板」，不用在两条消息之间来回复制那 6 位码。但 `?ABCD`
-     * 这种写法会把码交给服务端：Yunzai 的 serverHandle 会把 req.query 整个打进日志
-     * （lib/bot.js），而排查问题时大家习惯直接把 logs/command.*.log 贴出来 —— 那等于
-     * 把还没过期的验证码贴到公开的地方。hash 压根不发给服务端，因此不进 access log、
-     * 不随 Referer 外泄，前端读完立刻 replaceState 抹掉，地址栏与截图里也不留。
+     * 不用 `?ABCD`：query 会被交给服务端，Yunzai 的 serverHandle 把 req.query 整个写进
+     * 日志（框架 lib/bot.js:146-152），而排查问题时 logs/command.*.log 常被直接贴出，
+     * 等于把未过期的验证码公开。hash 不发送给服务端，因此不进 access log、不随 Referer
+     * 外泄；前端读完立刻 history.replaceState 抹掉（web/app.js:186），地址栏与截图里
+     * 也不留。
      *
-     * 这条路已经被验证可行：远程验证链接（/verify#t=xxx）用的就是同一套，QQ 能正常
+     * 远程验证链接 `/verify#t=xxx` 用的是同一套（web/verify.html:122-123），QQ 能正常
      * 识别带 hash 的链接。
      */
     const link = `${url}#${code}`
@@ -73,11 +84,12 @@ export class DouyinWeb extends plugin {
     audit.add("web.open", { botId: e.self_id, userId: e.user_id, group: e.group_id || "" })
 
     /*
-     * 群里那条回复默认给主机名打码（web.maskLinkInGroup）。
+     * 群里那条回复默认给主机与端口打码（web.maskLinkInGroup，默认 true）。
      *
-     * 完整地址已经在上面的私信里了，群里这句真正的作用只是「指令收到了」；
-     * 而用公网 IP 直连的人一旦在群里贴出原样地址，等于把机器交给全部群成员去扫端口。
-     * 用域名 + HTTPS 的人把开关关掉就能继续看到完整链接。
+     * 完整地址已经在上面的私信里，群里这句的作用只是确认「指令收到了」；而公网 IP 直连的
+     * 部署一旦在群里贴出原样地址，等于把机器地址交给全部群成员去扫端口。打码规则见
+     * lib/util.js 的 maskUrl：主机保留尾 3 字符，端口整段替换成同长度的 *，协议与路径原样。
+     * 用域名 + HTTPS 的部署把开关关掉即可继续看到完整链接。
      */
     const masked = e.isGroup && config.bool("web.maskLinkInGroup", true)
     const reply = [`🔗 抖音续火面板：${masked ? maskUrl(url) : url}`, `一键进入链接已私信发送，${Math.floor(ttl / 60)} 分钟内有效`]
@@ -85,23 +97,31 @@ export class DouyinWeb extends plugin {
     return e.reply(reply.join("\n"), true)
   }
 
+  /**
+   * 下线：把「发给这个人、现在还能用」的四类东西一次清干净。
+   * 面板验证码、面板会话、远程验证链接票据、进行中的登录会话。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} e.reply 的结果，文案里带上各类实际清掉的数量
+   */
   async closeWeb(e) {
     const codes = revokeCodes(e.user_id)
     const sessions = destroyUserSessions(e.user_id)
-    // 远程验证链接也是「发给这个人的、还能用的东西」，一起清掉才算真的下线
+    // 远程验证链接也是「发给这个人的、还能用的入口」，一起清掉才算真的下线
     const tickets = revokeUserTickets(e.user_id)
     /*
      * 还在跑的登录会话也要一起终止。
      *
-     * 光撕票据只是让链接打不开，那个浏览器页面还开着占内存，超时兜底也还挂着——
-     * 于是人早就下线了，十分钟后照旧收到一句「❌ 抖音要求的验证在 10 分 0 秒内没有
-     * 完成」。会话走 canceled 终态之后 cleanup 会摘掉定时器，那条提示不会再发。
+     * 只撕票据只是让链接打不开，浏览器页面还开着占内存，超时兜底也还挂着——于是人早已
+     * 下线，十分钟后照旧收到一句「❌ 抖音要求的验证在 10 分 0 秒内没有完成」
+     * （lib/login.js:393）。会话进 canceled 终态后 cleanup 会 clearTimeout 摘掉兜底，
+     * 而超时与失败两条兜底路径都先检查 `["success","failed","canceled"].includes(status)`，
+     * 因此不会再向外推送任何消息。
      */
     const logins = await cancelUserSessions(e.user_id)
     const parts = [`已作废 ${codes} 个验证码、${sessions} 个面板会话`]
     if (tickets) parts.push(`${tickets} 个验证链接`)
     if (logins) parts.push(`并终止 ${logins} 个进行中的登录会话（浏览器已关闭，不会再有超时提示）`)
-    // 这句就是「下线提示」本身：指令在哪发的就回哪，群里发的群里可见
+    // 这条回复本身不含任何地址或验证码，因此指令在哪发就回哪，群里可见无妨
     return e.reply(parts.join("、"), true)
   }
 }

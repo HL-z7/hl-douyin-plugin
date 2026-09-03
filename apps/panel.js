@@ -1,9 +1,16 @@
 /**
- * 状态、设置、帮助三条「看信息」指令。
+ * 状态、设置、帮助三条「看信息」指令，外加供外部调用的 applyConfigChange。
  *
- * 内容一律由 lib/panel.js 组装，这里只负责「出图还是出字」：
- * replyRender 会在渲染关闭、渲染失败、图片发不出去这三种情况下自动降级成文字，
- * 所以指令层不需要各自判断一遍。
+ * 位置：指令层。内容一律由 lib/panel.js 组装，这里只负责「出图还是出字」：
+ * replyRender（lib/render.js）会在渲染关闭（render.image）、渲染失败、图片发不出去这三种
+ * 情况下自动降级成文字，所以指令层不需要各自判断一遍。
+ *
+ * `#抖音设置` 是唯一会写配置的一条：常改的开关支持指令直改（config.set 立刻落盘），
+ * 复杂配置（消息模板、好友别名备注、多推送目标）交给 `#抖音web` 面板或锅巴。
+ *
+ * 协作模块：lib/panel.js（三套展示数据与纯文字版）、lib/config.js（读写配置）、
+ * lib/scheduler.js（改 cron 后重建定时任务）、lib/auth.js（IP 解封、面板会话列表）、
+ * lib/remote.js（远程验证票据列表）、lib/chat.js（关聊天开关时收掉已开会话）。
  */
 import { config } from "../lib/config.js"
 import { toError } from "../lib/util.js"
@@ -29,6 +36,9 @@ export class DouyinPanel extends plugin {
       event: "message",
       priority: 800,
       rule: [
+        // 状态与帮助不限主人：内容里不含 Cookie、地址与验证码，群成员看到也没有可利用信息。
+        // 设置会写配置，因此挂 permission master
+        // （loader 的 filtPermission，框架 lib/plugins/loader.js:334-354）
         { reg: "^#?(dy|抖音)状态$", fnc: "showStatus" },
         { reg: "^#?(dy|抖音)设置", fnc: "settings", permission: "master" },
         { reg: "^#?(dy|抖音)(帮助|菜单)$", fnc: "help" },
@@ -36,15 +46,38 @@ export class DouyinPanel extends plugin {
     })
   }
 
+  /**
+   * 状态：定时任务、账号、推送、面板会话与聊天的当前情况。
+   * 数据按 e.self_id 取，多机器人部署下各自只看到自己的账号。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} replyRender 的结果
+   */
   async showStatus(e) {
     return replyRender(e, "status/status", buildStatusData(e.self_id), statusText(e.self_id))
   }
 
+  /**
+   * 帮助：全部指令与使用约定。
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} replyRender 的结果
+   */
   async help(e) {
     return replyRender(e, "help/help", buildHelpData(e.self_id), helpText())
   }
 
-  /** 常改的几项支持指令直改，复杂配置（模板、好友备注、多目标）交给面板/锅巴 */
+  /**
+   * 设置：不带参数时展示当前配置，带参数时改一项。
+   *
+   * 只收「一个设置项名 + 一个值」的形态：`key` 取第一段，其余全部并成 value（备注、cron
+   * 这类值本身含空格）。开关类统一用 on/off 两个正则判定，中英文与 1/0 都认；两个都不匹配
+   * 时回一句格式提示而不是猜——猜错会把开关拨到用户没要的一侧。
+   *
+   * 整段包在 try 里：config.set 走同步写盘，磁盘满或无权限时会抛，
+   * 这里统一转成一句「设置失败」，不让异常冒到 loader 变成日志里的堆栈。
+   *
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} e.reply / replyRender 的结果
+   */
   async settings(e) {
     const rest = e.msg.replace(/^#?(dy|抖音)设置\s*/, "").trim()
     if (!rest)
@@ -61,6 +94,7 @@ export class DouyinPanel extends plugin {
         case "续火": {
           if (!on && !off) return e.reply("格式：#抖音设置 定时 开/关")
           config.set("spark.enable", on)
+          // 只改配置不够：node-schedule 的 job 由 scheduler 自己持有，要它当场注销/重建
           scheduler.reschedule()
           return e.reply(`定时续火已${on ? "开启" : "关闭"}${on ? `，下次 ${scheduler.status().nextTime}` : ""}`)
         }
@@ -70,7 +104,8 @@ export class DouyinPanel extends plugin {
           const old = config.get("spark.cron")
           config.set("spark.cron", value)
           const job = scheduler.reschedule()
-          // 注册失败说明表达式非法，还原旧值，否则定时任务会静默消失
+          // 表达式非法时 scheduleJob 返回 null（lib/scheduler.js 只记日志、不回滚配置），
+          // 还原旧值这一步必须在这里做，否则定时任务静默消失、用户以为改成功了
           if (!job && config.bool("spark.enable", true)) {
             config.set("spark.cron", old)
             scheduler.reschedule()
@@ -168,11 +203,16 @@ export class DouyinPanel extends plugin {
           )
         }
         case "加群": {
+          // 不带群号时就用当前群，「在哪个群里发的就加哪个群」是最常见的用法
           const groupId = value || String(e.group_id || "")
           if (!groupId) return e.reply("请在群内使用，或指定群号：#抖音设置 加群 群号")
           const groups = config.get("push.groups", []) || []
+          // 按「机器人 + 群号」判重，而不是只看群号：多机器人部署下同一个群可以由两台
+          // 分别推送，只看群号会把第二台挡在外面
           if (groups.some(g => String(g.groupId) === groupId && String(g.botId || "") === String(e.self_id)))
             return e.reply("该群已在推送列表中")
+          // 显式写上 botId：留空表示「由执行续火的那台发送」，而这里的语义是
+          // 「由当前这台发送」，两者在多机器人下结果不同（归一化见 Config.pushTargets）
           groups.push({ botId: String(e.self_id), groupId })
           config.set("push.groups", groups)
           return e.reply(`已添加推送群 ${groupId}（由 ${e.self_id} 发送），当前共 ${groups.length} 个`)
@@ -180,12 +220,14 @@ export class DouyinPanel extends plugin {
         case "删群": {
           const groupId = value || String(e.group_id || "")
           if (!groupId) return e.reply("格式：#抖音设置 删群 群号")
+          // 只按群号过滤：同一群号被多台机器人各配了一条时，一次全部删掉
           const groups = (config.get("push.groups", []) || []).filter(g => String(g.groupId) !== groupId)
           config.set("push.groups", groups)
           return e.reply(`已移除推送群 ${groupId}，当前剩 ${groups.length} 个`)
         }
         case "加好友":
         case "加私聊": {
+          // 不带 QQ 号时用发起人自己，「把结果推给我」是最常见的用法
           const userId = value || String(e.user_id || "")
           if (!userId) return e.reply("格式：#抖音设置 加好友 QQ号（不填则用自己）")
           const friends = config.get("push.friends", []) || []
@@ -194,6 +236,8 @@ export class DouyinPanel extends plugin {
           friends.push({ botId: String(e.self_id), userId })
           config.set("push.friends", friends)
           return e.reply(
+            // 目标配好了但 push.target 是 group 时私聊收不到（lib/push.js 按范围取列表），
+            // 这种「配了却没生效」最难自查，所以在这里当场提示
             `已添加推送好友 ${userId}（由 ${e.self_id} 发送），当前共 ${friends.length} 个` +
               `${config.pushToFriend() ? "" : "\n注意：当前推送范围是「仅群」，私聊不会收到，可用「#抖音设置 推送范围 两者」"}`
           )
@@ -226,6 +270,7 @@ export class DouyinPanel extends plugin {
         }
         case "解封IP":
         case "解封ip":
+          // 拉黑只存在内存里（重启即清），因此这里没有对应的「封禁某 IP」指令
           return e.reply(`已解封 ${unbanAll()} 个 IP`)
         case "会话": {
           const list = sessionList()
@@ -259,8 +304,10 @@ export class DouyinPanel extends plugin {
 /**
  * 供外部（锅巴保存、手改 yaml 后）调用，让配置与 cron 立刻生效。
  *
- * 必须写成箭头函数：loader 只用 `if (!p?.prototype) return` 过滤导出（loader.js:131），
- * 普通 function 有 prototype，会被当成插件类 new 两次并读 `rule.length` 而报错。
+ * 必须写成箭头函数：loader 过滤非插件导出只看 `if (!p?.prototype) return`
+ * （框架 lib/plugins/loader.js:151），普通 function 有 prototype，会被当成插件类 new 出来，
+ * 随后 collectTask 读 `init.task` 的 cron 时抛 TypeError（同文件 155-160、530-538）。
+ * 箭头函数没有 prototype，正好被那一行过滤掉。
  */
 export const applyConfigChange = () => {
   config.reload()

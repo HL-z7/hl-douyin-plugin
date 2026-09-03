@@ -1,8 +1,8 @@
-<h1 align="center">hl-douyin-plugin</h1>
-
 <p align="center">
   <img src="./img/hl-douyin-plugin.png" width="180" alt="hl-douyin-plugin">
 </p>
+
+<h1 align="center">hl-douyin-plugin</h1>
 
 <p align="center">
   <img src="https://img.shields.io/badge/node-%3E%3D23.4-green?logo=node.js" alt="node">

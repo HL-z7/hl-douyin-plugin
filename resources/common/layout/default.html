@@ -2,10 +2,13 @@
 <!--
   公共布局：帮助 / 设置 / 状态三套模板都 extend 它。
 
-  两个必须遵守的约定：
+  三个必须遵守的约定：
   1. 宽度写在 .page 上并由它承担 id="container"。Yunzai 的 puppeteer 截的是
      `page.$("#container") || page.$("body")`，套在 body 上限宽会让右侧留白被算进截图。
-  2. 样式表用绝对 file:// 路径（由 lib/render.js 注入 _res_path）。渲染产物落在
+  2. 缩放整段 style 由 lib/render.js 注入到 <body>（`{{@sys.scale}}`，art-template 的
+     `{{@}}` 不转义）。清晰度只能从这里来——渲染器截的是元素而不是整页，
+     deviceScaleFactor 对元素截图无效。
+  3. 样式表用绝对 file:// 路径（由 lib/render.js 注入 _res_path）。渲染产物落在
      temp/html/<name>/<saveId>.html，相对路径的层级取决于 name 里的斜杠数量，
      一旦模板改名就会静默丢样式；绝对路径没有这个坑。
 -->
@@ -21,17 +24,15 @@
 <body {{@sys.scale}}>
   <div class="page" id="container">
     <div class="hero">
-      <div class="hero-glow"></div>
-      <div class="hero-main">
-        <div class="logo">{{icon || '🔥'}}</div>
-        <div class="hero-text">
-          <div class="hero-title">{{title}}</div>
-          <div class="hero-sub">{{subtitle}}</div>
-        </div>
-        {{if badge}}
-        <div class="pill {{badgeType || 'neutral'}}">{{badge}}</div>
-        {{/if}}
+      <div class="logo">{{icon || '🔥'}}</div>
+      <div class="hero-text">
+        <div class="hero-kicker">{{kicker || 'HL DOUYIN PLUGIN'}}</div>
+        <div class="hero-title">{{title}}</div>
+        <div class="hero-sub">{{subtitle}}</div>
       </div>
+      {{if badge}}
+      <div class="pill {{badgeType || 'neutral'}}">{{badge}}</div>
+      {{/if}}
     </div>
 
     {{block 'main'}}{{/block}}
@@ -39,7 +40,7 @@
     <div class="foot">
       <span class="foot-name">hl-douyin-plugin</span>
       <span class="foot-ver">v{{version}}</span>
-      <span class="foot-dot">·</span>
+      <span>·</span>
       <span>TRSS-Yunzai</span>
     </div>
   </div>

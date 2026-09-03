@@ -1,6 +1,21 @@
 {{extend defaultLayout}}
 {{block 'main'}}
 
+<!--
+  能力概览：先让人知道这插件能干什么，再看指令。
+  两列是因为每格的主词只有五六个字，四格排一行会各剩一半空白。
+-->
+<div class="feats">
+{{each feats f}}
+  <div class="stat">
+    <div class="lbl">{{f.tag}}</div>
+    <div class="num">{{f.name}}</div>
+    <div class="sub">{{f.desc}}</div>
+  </div>
+{{/each}}
+</div>
+
+<!-- 指令清单保持单列：一条指令加上参数就有二三十个字符，两列排会让 .cmd 频繁换行 -->
 {{each groups g}}
 <div class="card">
   <div class="card-title">{{g.name}}{{if g.right}}<span class="right">{{g.right}}</span>{{/if}}</div>
@@ -12,6 +27,16 @@
   {{/each}}
 </div>
 {{/each}}
+
+<!-- 对所有指令都成立的那几条约定。它们不属于任何一个分组，塞进提示条会把那段话撑长 -->
+<div class="strip">
+{{each rules r}}
+  <div>
+    <span class="k2">{{r.k}}</span>
+    <span class="v2">{{@r.v}}</span>
+  </div>
+{{/each}}
+</div>
 
 <div class="note">
   {{@tip}}

@@ -1,17 +1,20 @@
 {{extend defaultLayout}}
 {{block 'main'}}
 
+<!-- 配置段落两列排：900px 下键值行只占一半宽，单列会把设置面板拖成 5 屏 -->
+<div class="grid2">
 {{each sections sec}}
-<div class="card">
-  <div class="card-title">{{sec.name}}{{if sec.right}}<span class="right">{{sec.right}}</span>{{/if}}</div>
-  {{each sec.rows row}}
-  <div class="kv">
-    <span class="k">{{row.k}}</span>
-    <span class="v {{row.mono ? 'mono' : ''}} {{row.dim ? 'dim' : ''}}">{{row.v}}</span>
+  <div class="card">
+    <div class="card-title">{{sec.name}}{{if sec.right}}<span class="right">{{sec.right}}</span>{{/if}}</div>
+    {{each sec.rows row}}
+    <div class="kv">
+      <span class="k">{{row.k}}</span>
+      <span class="v {{row.mono ? 'mono' : ''}} {{row.dim ? 'dim' : ''}}">{{row.v}}</span>
+    </div>
+    {{/each}}
   </div>
-  {{/each}}
-</div>
 {{/each}}
+</div>
 
 <div class="card">
   <div class="card-title">可直接改的项<span class="right">指令</span></div>

@@ -36,15 +36,19 @@ TRSS-Yunzai 抖音自动续火插件。定时给抖音好友发消息保住火�
 
 ## 安装
 
-在 Yunzai 根目录执行，然后重启：
+在 Yunzai 根目录执行，然后重启。两个源内容一致，选一个即可：
 
 ``` bash
+# Gitee（国内直连快）
 git clone --depth 1 https://gitee.com/fox-glaze/hl-douyin-plugin ./plugins/hl-douyin-plugin
+
+# GitHub
+git clone --depth 1 https://github.com/HL-z7/hl-douyin-plugin ./plugins/hl-douyin-plugin
 ```
 
 无需 `npm install`：依赖全部复用 Yunzai 自带的 puppeteer / express / node-schedule / yaml / lodash。聊天记录用 Node 内置的 `node:sqlite`，也不算新依赖，但它要 **Node ≥ 22.5**；低于这个版本聊天功能照样能用，只是不落盘（看不到本地历史），其余功能不受影响。
 
-装好后 `#抖音更新` 就能拉新代码并自动重启，不必再手动 `git pull`。
+装好后 `#抖音更新` 就能拉新代码并自动重启，不必再手动 `git pull` —— 它拉的是你 clone 时用的那个源。
 
 首次启动自动生成：
 

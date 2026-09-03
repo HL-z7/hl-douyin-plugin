@@ -1,4 +1,14 @@
-# hl-douyin-plugin
+<h1 align="center">hl-douyin-plugin</h1>
+
+<p align="center">
+  <img src="./img/hl-douyin-plugin.png" width="180" alt="hl-douyin-plugin">
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%3E%3D23.4-green?logo=node.js" alt="node">
+  <img src="https://img.shields.io/badge/Yunzai-V3-blue" alt="yunzai">
+  <img src="https://img.shields.io/badge/license-MIT-yellow" alt="license">
+</p>
 
 TRSS-Yunzai 抖音自动续火插件。定时给抖音好友发消息保住火花，跑完把结果推到群里，配套一个带临时验证码鉴权的 Web 面板做可视化管理。
 

@@ -1,3 +1,4 @@
+import path from "node:path"
 import lodash from "lodash"
 import { config, DEFAULT_CONFIG, PUSH_TARGETS } from "./lib/config.js"
 import { scheduler } from "./lib/scheduler.js"
@@ -6,7 +7,7 @@ import { store, normalizeTargets, targetText, parseCookieInput, assertLoginCooki
 import { manualLogin } from "./lib/login.js"
 import { pickDefaultBot } from "./lib/bot.js"
 import { audit } from "./lib/audit.js"
-import { log, toError, formatTime } from "./lib/util.js"
+import { log, toError, formatTime, pluginRoot } from "./lib/util.js"
 
 /**
  * 锅巴配置支持：把插件配置暴露给锅巴（Guoba-Plugin）面板。
@@ -228,6 +229,9 @@ export function supportGuoba() {
       isV3: true,
       isV2: false,
       showInMenu: "auto",
+      // iconPath 存在时锅巴显示这张图，icon/iconColor 是它读不到文件时的退路
+      // （iconify 图标名，见 https://icon-sets.iconify.design）。必须传绝对路径
+      iconPath: path.join(pluginRoot, "img/hl-douyin-plugin.png"),
       icon: "mdi:fire",
       iconColor: "#fe2c55",
     },

@@ -36,11 +36,14 @@ TRSS-Yunzai 抖音自动续火插件。定时给抖音好友发消息保住火�
 
 ## 安装
 
-在 Yunzai 根目录执行，然后重启。两个源内容一致，选一个即可：
+在 Yunzai 根目录执行，然后重启。三个源内容一致，选一个即可：
 
 ``` bash
-# Gitee（国内直连快）
+# Gitee（主仓库，更新最快）
 git clone --depth 1 https://gitee.com/fox-glaze/hl-douyin-plugin ./plugins/hl-douyin-plugin
+
+# GitCode（国内直连，同步自 Gitee，可能滞后一会儿）
+git clone --depth 1 https://gitcode.com/sujier/hl-douyin-plugin ./plugins/hl-douyin-plugin
 
 # GitHub
 git clone --depth 1 https://github.com/HL-z7/hl-douyin-plugin ./plugins/hl-douyin-plugin

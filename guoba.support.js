@@ -6,6 +6,7 @@ import { PLACEHOLDERS, normalizeTemplate } from "./lib/template.js"
 import { store, normalizeTargets, targetText, parseCookieInput, assertLoginCookie } from "./lib/store.js"
 import { manualLogin } from "./lib/login.js"
 import { pickDefaultBot } from "./lib/bot.js"
+import * as chat from "./lib/chat.js"
 import { audit } from "./lib/audit.js"
 import { log, toError, formatTime, pluginRoot } from "./lib/util.js"
 
@@ -20,7 +21,8 @@ import { log, toError, formatTime, pluginRoot } from "./lib/util.js"
  * 1. 扁平点路径 —— schemas 里的 field 直接写成 `spark.cron` 这类点路径，读写都走
  *    lib/config.js 的同一个 Config 单例。锅巴、Web 面板、#抖音设置 三处改的是同一份
  *    config/config.yaml，任一处保存后另两处立即读到新值。保存后调 scheduler.reschedule()，
- *    改 cron 无需重启。
+ *    改 cron 无需重启，关掉聊天总开关也会顺手收掉已开的会话（与 apps/panel.js、
+ *    lib/reload.js 两条路一致）。手改文件那条路由 lib/reload.js 的监听兜住，不需要锅巴参与。
  * 2. 单独映射 —— pushGroups / pushFriends / accounts 三个 field 不是配置路径：前两个由
  *    targetsToForm / formToTargets 在表单结构与 push.groups / push.friends 之间转换；
  *    账号数据在 data/accounts/<botId>.json（且 Cookie 加密），由 accountsToForm /
@@ -29,7 +31,7 @@ import { log, toError, formatTime, pluginRoot } from "./lib/util.js"
  * 对外导出：`supportGuoba()`，锅巴约定的唯一入口。
  *
  * 依赖 lib/config.js、lib/scheduler.js、lib/template.js、lib/store.js、lib/login.js、
- * lib/bot.js、lib/audit.js、lib/util.js 与 lodash。
+ * lib/bot.js、lib/chat.js、lib/audit.js、lib/util.js 与 lodash。
  */
 
 /** 可用占位符提示串，形如 `{{friend}} {{date}} ...`，拼进多处 bottomHelpMessage */
@@ -744,9 +746,14 @@ export function supportGuoba() {
        * 锅巴打开面板时读取。
        * config.reload() 重新读盘以反映其它入口（Web 面板 / #抖音设置 / 手改文件）的改动，
        * 返回的是与默认值合并后的完整配置树，再补上三个表单专用字段。
+       *
+       * 走 strict 并在失败时退回内存里那份：文件写坏（语法错误 / 只剩半截）时普通 reload 会
+       * 退回默认值，于是面板上显示的是一份「默认配置」，用户一点确定就把这份默认值写了回去，
+       * 原先的配置就此丢失。strict 下读到坏文件返回 null，这里改用当前生效的配置顶上，
+       * 与 lib/reload.js 的热重载同一个判据。
        */
       getConfigData() {
-        const data = config.reload()
+        const data = config.reload({ strict: true }) || config.data
         return {
           ...lodash.cloneDeep(data),
           pushGroups: targetsToForm(data.push?.groups, "groupId"),
@@ -808,6 +815,19 @@ export function supportGuoba() {
           const accountNotes = saveAccounts(data?.accounts || [])
 
           config.setMany(entries)
+
+          // 关掉聊天总开关时收掉已开的会话。apps/panel.js 的「#抖音设置 聊天 关」与
+          // lib/reload.js 的文件监听都是这么做的，锅巴这条路原本漏了 —— 表现是开关关了、
+          // 面板入口消失，可页面上那个抖音登录态还挂着，一直到 chat.idleCloseSec（默认 3 分钟）
+          // 才自己收掉。收会话是异步的，这里不等：setConfigData 要同步给锅巴返回结果，
+          // 失败只记日志（同 lib/reload.js 的处理）
+          if (entries["chat.enable"] !== undefined && config.get("chat.enable", true) === false)
+            chat
+              .closeAll("聊天功能已关闭")
+              .then(count => {
+                if (count) log("info", `私信聊天已关闭，顺带收掉 ${count} 个开着的会话`)
+              })
+              .catch(error => log("warn", "关闭聊天会话失败：", toError(error).message))
 
           const job = scheduler.reschedule()
           if (config.get("spark.enable", true) !== false && !job)

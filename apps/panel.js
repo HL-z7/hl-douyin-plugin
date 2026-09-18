@@ -1,5 +1,5 @@
 /**
- * 状态、设置、帮助三条「看信息」指令，外加供外部调用的 applyConfigChange。
+ * 状态、设置、帮助三条「看信息」指令，加一条 `#抖音重载`，外加供外部调用的 applyConfigChange。
  *
  * 位置：指令层。内容一律由 lib/panel.js 组装，这里只负责「出图还是出字」：
  * replyRender（lib/render.js）会在渲染关闭（render.image）、渲染失败、图片发不出去这三种
@@ -7,14 +7,18 @@
  *
  * `#抖音设置` 是唯一会写配置的一条：常改的开关支持指令直改（config.set 立刻落盘），
  * 复杂配置（消息模板、好友别名备注、多推送目标）交给 `#抖音web` 面板或锅巴。
+ * `#抖音重载` 反过来，只读盘：手改 config.yaml 后让它生效（正常情况下由 lib/reload.js
+ * 的文件监听自动完成，这条是指令侧的退路与确认手段）。
  *
  * 协作模块：lib/panel.js（三套展示数据与纯文字版）、lib/config.js（读写配置）、
- * lib/scheduler.js（改 cron 后重建定时任务）、lib/auth.js（IP 解封、面板会话列表）、
- * lib/remote.js（远程验证票据列表）、lib/chat.js（关聊天开关时收掉已开会话）。
+ * lib/reload.js（配置热重载）、lib/scheduler.js（改 cron 后重建定时任务）、lib/auth.js
+ * （IP 解封、面板会话列表）、lib/remote.js（远程验证票据列表）、lib/chat.js（关聊天开关时
+ * 收掉已开会话）。
  */
 import { config } from "../lib/config.js"
 import { toError } from "../lib/util.js"
 import { scheduler } from "../lib/scheduler.js"
+import { reloadConfig as reloadConfigFile, watchState } from "../lib/reload.js"
 import { unbanAll, sessionList } from "../lib/auth.js"
 import { ticketStatus } from "../lib/remote.js"
 import { replyRender } from "../lib/render.js"
@@ -41,6 +45,9 @@ export class DouyinPanel extends plugin {
         // （loader 的 filtPermission，框架 lib/plugins/loader.js:334-354）
         { reg: "^#?(dy|抖音)状态$", fnc: "showStatus" },
         { reg: "^#?(dy|抖音)设置", fnc: "settings", permission: "master" },
+        // 手改 config.yaml 本来就会自动热重载（lib/reload.js 的监听），这条是监听起不来
+        // （Docker 挂载目录收不到 inotify 之类）或想确认「到底有没有生效」时的退路
+        { reg: "^#?(dy|抖音)(重载|刷新)(配置)?$", fnc: "reloadConfig", permission: "master" },
         { reg: "^#?(dy|抖音)(帮助|菜单)$", fnc: "help" },
       ],
     })
@@ -63,6 +70,45 @@ export class DouyinPanel extends plugin {
    */
   async help(e) {
     return replyRender(e, "help/help", buildHelpData(e.self_id), helpText())
+  }
+
+  /**
+   * 手动重载配置：`#抖音重载` / `#抖音刷新配置`。
+   *
+   * 与文件监听的回调走同一条路径（lib/reload.js 的 reloadConfig），这里不重复任何应用逻辑，
+   * 只把结果讲清楚：改了几项、哪些要重启、监听到底有没有在跑。
+   *
+   * 「没有变化」是常见且正常的输出：手改 config.yaml 时改动多半已被监听自动消化，
+   * 这条指令的价值就在「确认到底生效了没有」——监听失效的环境（Docker 挂载目录收不到
+   * inotify 等）下它是唯一的路。
+   *
+   * @param {object} e 消息事件
+   * @returns {Promise<*>} e.reply 的结果
+   */
+  async reloadConfig(e) {
+    const result = reloadConfigFile("指令触发")
+    if (!result.ok) return e.reply(result.reason)
+    const state = watchState()
+
+    if (!result.changed.length) {
+      return e.reply(
+        "配置文件没有新变化：进程里的配置与 config/config.yaml 一致。\n" +
+          (state.watching
+            ? `文件监听正常${state.at ? `，上次自动重载于 ${state.time}` : "，还没发生过自动重载"}。`
+            : "但 config.yaml 的文件监听没启用（原因见 Yunzai 日志），手改文件不会自动生效，需要每次执行本指令。")
+      )
+    }
+
+    const lines = [`配置已重载，${result.changed.length} 项生效：`]
+    for (const key of result.changed.slice(0, 12)) lines.push(`· ${key}`)
+    if (result.changed.length > 12) lines.push(`· 等共 ${result.changed.length} 项`)
+    // 这三项在导入期就被读掉了（路由挂载与监听端口），热重载覆盖不到，必须点名
+    if (result.restart.length)
+      lines.push(`注意：${result.restart.join("、")} 只在插件加载时读一次，要 #重启 才生效`)
+    // 手动执行通常意味着自动那条路本来就不可用，这时要说清「以后每次都得手动来一遍」
+    if (!state.watching)
+      lines.push("提示：config.yaml 的文件监听没启用（原因见 Yunzai 日志），下次手改文件还要再执行一次本指令。")
+    return e.reply(lines.join("\n"))
   }
 
   /**
@@ -302,14 +348,16 @@ export class DouyinPanel extends plugin {
 }
 
 /**
- * 供外部（锅巴保存、手改 yaml 后）调用，让配置与 cron 立刻生效。
+ * 供外部（其它插件、脚本）调用，让配置与 cron 立刻生效。
+ *
+ * 现在只是 lib/reload.js 那条路径的别名：手改 config.yaml 已由文件监听自动处理
+ * （index.js 的 installConfigWatcher），这条导出留给「监听失效」与外部调用两种场景。
+ * 与旧实现的两点差别：读盘改成 strict（文件写坏时保留当前配置而不是退回默认值），
+ * 并按 diff 执行副作用（cron 变了重排定时任务、聊天总开关关掉就收会话）。
  *
  * 必须写成箭头函数：loader 过滤非插件导出只看 `if (!p?.prototype) return`
  * （框架 lib/plugins/loader.js:151），普通 function 有 prototype，会被当成插件类 new 出来，
  * 随后 collectTask 读 `init.task` 的 cron 时抛 TypeError（同文件 155-160、530-538）。
  * 箭头函数没有 prototype，正好被那一行过滤掉。
  */
-export const applyConfigChange = () => {
-  config.reload()
-  scheduler.reschedule()
-}
+export const applyConfigChange = () => reloadConfigFile("外部调用")

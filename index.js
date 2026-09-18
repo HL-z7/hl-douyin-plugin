@@ -8,8 +8,12 @@
  *   把导出的 `apps` 摊平当成插件集合。这就是 `index.js + apps/` 模式的约定。
  * - 代价是本插件不参与热重载：loader 只在逐个扫描 .js 的那条分支里调 `this.watch()`
  *   （同文件 73 行），走 index.js 分支时一个 chokidar 监听都不注册。改 lib/*.js 或
- *   apps/*.js 之后必须 `#重启`；改配置不用，锅巴保存会调 apps/panel.js 的
- *   applyConfigChange()（config.reload() + scheduler.reschedule()）当场生效。
+ *   apps/*.js 之后必须 `#重启`。
+ * - 配置文件不在此列，它有两条当场生效的路（见 lib/reload.js）：锅巴 / Web 面板 /
+ *   `#抖音设置` 保存时改的是内存里的同一份配置，本来就是即时的；直接改 config/config.yaml
+ *   则由本文件末尾的 installConfigWatcher() 监听并热重载（`#抖音重载` 可手动触发）。
+ *   只有 web.enable / web.base / web.port 三项例外 —— 路由与监听端口都在导入期定死，
+ *   改这三项仍要 `#重启`。
  * - Express 路由与定时任务必须在导入期就绪：框架在插件加载完成后才给 Bot.express
  *   追加兜底重定向（框架 lib/bot.js:283，在 PluginsLoader.load() 之后），晚于那一刻挂的
  *   路由会被吃掉；定时任务自己持有 job，锅巴改完 cron 调 scheduler.reschedule()
@@ -25,10 +29,12 @@ import { pluginRoot, log } from "./lib/util.js"
 import { scheduler } from "./lib/scheduler.js"
 import { setupWeb } from "./lib/web.js"
 import { installShutdownHooks } from "./lib/shutdown.js"
+import { installConfigWatcher } from "./lib/reload.js"
 
 setupWeb()
 scheduler.reschedule()
 installShutdownHooks()
+installConfigWatcher()
 
 const appsDir = path.join(pluginRoot, "apps")
 const files = fs.existsSync(appsDir) ? fs.readdirSync(appsDir).filter(f => f.endsWith(".js")) : []

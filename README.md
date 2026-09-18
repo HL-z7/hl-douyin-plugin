@@ -19,6 +19,7 @@ TRSS-Yunzai 抖音自动续火插件。定时给抖音好友发消息保住火�
 ## 功能
 
 - **定时续火** — 6 位 cron（秒在最前），锅巴或指令改完立即生效，不用重启
+- **配置热重载** — 锅巴 / 面板 / 指令保存即时生效；直接手改 `config/config.yaml` 也会自动重新读盘（监听文件），改 `debug` 这类开关不用重启
 - **跳过今日已续火** — 抖音火花一天只认一次，已成功的账号定时任务直接跳过，可开关
 - **好友改名不断火** — 续火目标存 `主名 + 别名 + 备注`，主名搜不到自动试别名，命中后把新名提为主名
 - **结果推送** — 跑完自动发群 / 私聊 / 两者，支持多群、跨机器人、详细/简要两种模式、仅失败时推送
@@ -85,6 +86,7 @@ git clone --depth 1 https://github.com/HL-z7/hl-douyin-plugin ./plugins/hl-douyi
 | `#抖音删除账号 账号名` | 主人 | 连 Cookie 一起删 |
 | `#抖音状态` | 所有人 | 状态面板，默认出图 |
 | `#抖音设置` | 主人 | 查看当前配置与可改项，默认出图 |
+| `#抖音重载` | 主人 | 重新读 `config/config.yaml` 并让改动生效（手改文件通常自动生效，这条用来确认） |
 | `#抖音帮助` | 所有人 | 指令一览，默认出图 |
 | `#抖音更新` / `#抖音强制更新` | 主人 | git pull 拉新代码，按配置自动重启 |
 
@@ -111,6 +113,7 @@ git clone --depth 1 https://github.com/HL-z7/hl-douyin-plugin ./plugins/hl-douyi
 #抖音设置 删好友 [QQ号]
 #抖音设置 解封IP                  # 清空被限流拉黑的 IP
 #抖音设置 会话                    # 查看活跃的面板会话与远程验证链接
+#抖音重载                         # 手改 config.yaml 后重新读盘（通常自动生效）
 ```
 
 ## 怎么用
@@ -168,6 +171,20 @@ git clone --depth 1 https://github.com/HL-z7/hl-douyin-plugin ./plugins/hl-douyi
 
 `config/config.yaml`，也可在锅巴或面板里改。
 
+三条路都是改完立即生效，**不用重启**：
+
+- **锅巴 / Web 面板 / `#抖音设置`** — 保存时直接改进程里那份配置，本来就是即时的
+- **直接编辑 `config/config.yaml`** — 插件监听这个文件，保存后自动重新读盘：cron 会重新排表，
+  `chat.enable` 关掉会顺手收掉已开的聊天会话，日志里会记一行「配置已热重载」和改了哪几项
+- **`#抖音重载`** — 手动触发一次上面的流程。手改文件时通常用不上（自动的），
+  它的用处是确认「到底生效了没有」——Docker 挂载目录等环境收不到文件事件时它也是唯一的路
+
+例外只有三个：`web.enable`、`web.base`、`web.port`。路由与监听端口在插件加载时就定死了，
+改这三项仍要 `#重启`（热重载会在日志与 `#抖音重载` 的回复里点名提醒）。
+
+配置文件允许只写你要改的字段，缺的由代码里的默认值补齐；文件写坏（语法错误，或写到一半的
+残片）时热重载会整个放弃并把原因写进日志，**不会**把正在生效的配置换成默认值。
+
 | 键 | 默认 | 说明 |
 | --- | --- | --- |
 | `spark.enable` | `true` | 定时续火总开关 |
@@ -191,9 +208,9 @@ git clone --depth 1 https://github.com/HL-z7/hl-douyin-plugin ./plugins/hl-douyi
 | `push.mode` | `detail` | `detail` 逐条列出 / `summary` 只报数量 |
 | `push.onlyOnFail` | `false` | 开启后一切正常时保持静默 |
 | `push.groups` / `friends` | `[]` | `{botId, groupId}` / `{botId, userId}`，botId 留空 = 用执行续火的那台 |
-| `web.enable` | `true` | 面板总开关 |
-| `web.base` | `/douyin` | 挂载路径，改动需重启 |
-| `web.port` | `0` | 0 = 复用 Yunzai 端口 |
+| `web.enable` | `true` | 面板总开关（改动需重启） |
+| `web.base` | `/douyin` | 挂载路径（改动需重启） |
+| `web.port` | `0` | 0 = 复用 Yunzai 端口（改动需重启） |
 | `web.url` | `""` | 对外地址，反代时填 |
 | `web.codeTTL` / `sessionTTL` | `300` / `1800` | 验证码 / 会话有效期（秒） |
 | `web.rateWindow` / `rateGeneral` / `rateAuth` | `60` / `300` / `8` | 限流窗口与两个桶的配额 |
